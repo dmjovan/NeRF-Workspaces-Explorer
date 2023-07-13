@@ -1,0 +1,6 @@
+Replica -> NeRF-Workspaces-Explorer
+-----------------------------------
+office0 -> office_tokyo
+office1 -> office_new_york
+office2 -> office_geneve
+office4 -> office_belgrade
