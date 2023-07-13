@@ -51,7 +51,7 @@ class LandingPage(QMainWindow):
         for i in range(len(WORKSPACES.keys())):
             # Create a clickable label for each image
             label = QLabel(self)
-            pixmap = QPixmap(f"workspaces/{WORKSPACES[i]['folder_name']}/thumbnail.jpg")
+            pixmap = QPixmap(f"application/workspaces/{WORKSPACES[i]['folder_name']}/thumbnail.jpg")
 
             # Resize the image to fit the label width
             # pixmap = pixmap.scaledToWidth(400)
@@ -150,7 +150,7 @@ class WorkspaceViewer(QMainWindow):
 
         # Create the bird's-eye view image and description
         self.bev_label = BirdsEyeViewImageArea(self)
-        self.bev_pixmap = QPixmap(f"workspaces/{WORKSPACES[self.workspace_index]['folder_name']}/floor_plan.jpg")
+        self.bev_pixmap = QPixmap(f"application/workspaces/{WORKSPACES[self.workspace_index]['folder_name']}/floor_plan.jpg")
         self.bev_pixmap = self.bev_pixmap.scaledToWidth(800)
         self.bev_label.setPixmap(self.bev_pixmap)
         self.bev_label.setAlignment(Qt.AlignCenter)
@@ -270,7 +270,7 @@ class WorkspaceViewer(QMainWindow):
         self.left_button.setMaximumWidth(200)
         self.left_button.setMaximumHeight(40)
         self.left_button.setStyleSheet(self.camera_buttons_style_sheet)
-        self.left_button.setIcon(QIcon("imgs/left_arrow.png"))
+        self.left_button.setIcon(QIcon("application/imgs/left_arrow.png"))
         self.left_button.setIconSize(self.left_button.size())
         self.left_button.clicked.connect(self.left_button_clicked)
         buttons_layout.addWidget(self.left_button)
@@ -280,7 +280,7 @@ class WorkspaceViewer(QMainWindow):
         self.right_button.setMaximumWidth(200)
         self.right_button.setMaximumHeight(40)
         self.right_button.setStyleSheet(self.camera_buttons_style_sheet)
-        self.right_button.setIcon(QIcon("imgs/rigth_arrow.png"))
+        self.right_button.setIcon(QIcon("application/imgs/rigth_arrow.png"))
         self.right_button.setIconSize(self.right_button.size())
         self.right_button.clicked.connect(self.right_button_clicked)
         buttons_layout.addWidget(self.right_button)
@@ -290,7 +290,7 @@ class WorkspaceViewer(QMainWindow):
         self.up_button.setMaximumWidth(200)
         self.up_button.setMaximumHeight(40)
         self.up_button.setStyleSheet(self.camera_buttons_style_sheet)
-        self.up_button.setIcon(QIcon("imgs/up_arrow.png"))
+        self.up_button.setIcon(QIcon("application/imgs/up_arrow.png"))
         self.up_button.setIconSize(self.up_button.size())
         self.up_button.clicked.connect(self.up_button_clicked)
         buttons_layout.addWidget(self.up_button)
@@ -300,7 +300,7 @@ class WorkspaceViewer(QMainWindow):
         self.down_button.setMaximumWidth(200)
         self.down_button.setMaximumHeight(40)
         self.down_button.setStyleSheet(self.camera_buttons_style_sheet)
-        self.down_button.setIcon(QIcon("imgs/down_arrow.png"))
+        self.down_button.setIcon(QIcon("application/imgs/down_arrow.png"))
         self.down_button.setIconSize(self.down_button.size())
         self.down_button.clicked.connect(self.down_button_clicked)
         buttons_layout.addWidget(self.down_button)
