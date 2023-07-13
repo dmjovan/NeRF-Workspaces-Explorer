@@ -11,11 +11,7 @@ WORKSPACES = {
     0: {"name": "Office 0", "folder_name": "office0"},
     1: {"name": "Office 1", "folder_name": "office1"},
     2: {"name": "Office 2", "folder_name": "office2"},
-    3: {"name": "Office 3", "folder_name": "office3"},
-    # 4: {"name": "Office 4", "folder_name": "office4"},
-    # 5: {"name": "Room 0", "folder_name": "room0"},
-    # 6: {"name": "Room 1", "folder_name": "room1"},
-    # 7: {"name": "Room 2", "folder_name": "room2"},
+    3: {"name": "Office 4", "folder_name": "office4"}
 }
 
 
@@ -122,7 +118,7 @@ class WorkspaceViewer(QMainWindow):
         # Set the application window title
         self.setWindowTitle("Workspace Details")
         # Set the fixed size of the window
-        self.setFixedSize(1000, 800)
+        self.setFixedSize(1200, 1000)
 
         # Create a central widget and layout
         central_widget = QWidget(self)
@@ -154,7 +150,7 @@ class WorkspaceViewer(QMainWindow):
 
         # Create the bird's-eye view image and description
         self.bev_label = BirdsEyeViewImageArea(self)
-        self.bev_pixmap = QPixmap(f"workspaces/{WORKSPACES[self.workspace_index]['folder_name']}/birdseye.jpg")
+        self.bev_pixmap = QPixmap(f"workspaces/{WORKSPACES[self.workspace_index]['folder_name']}/floor_plan.jpg")
         self.bev_pixmap = self.bev_pixmap.scaledToWidth(800)
         self.bev_label.setPixmap(self.bev_pixmap)
         self.bev_label.setAlignment(Qt.AlignCenter)
