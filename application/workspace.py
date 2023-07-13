@@ -1,19 +1,30 @@
-from abc import ABCMeta
-from typing import Tuple
+from abc import ABCMeta, abstractmethod
+from collections import namedtuple
 
 import numpy as np
+
+HW = namedtuple("HW", ["h", "w"])
+HW.__new__.__defaults__ = (0, 0)
+HW.__str__ = lambda d: f"h = {d.h}, w = {d.w}"
+HW.__ge__ = lambda self, other: (self.h >= other.h) and (self.w >= other.w)
+HW.__le__ = lambda self, other: (self.h <= other.h) and (self.w <= other.w)
+HW.__copy__ = lambda self: HW(self.h, self.w)
+
+XYZ = namedtuple("XYZ", ["x", "y", "z"])
+XYZ.__new__.__defaults__ = (0.0, 0.0, 0.0)
+XYZ.__str__ = lambda c: f"x = {c.x}, y = {c.y}, z = {c.z}"
+XYZ.__copy__ = lambda self: XYZ(self.x, self.y, self.z)
 
 
 class Workspace(metaclass=ABCMeta):
 
-    def __init__(self, name: str, folder_path: str, thumbnail_size: Tuple[int, int],
-                 floor_plan_size: Tuple[int, int], floor_plan_scale: Tuple[int, int]) -> None:
+    def __init__(self, name: str, folder_path: str, floor_plan_scale: HW) -> None:
+        super().__init__()
+
         self._name: str = name
         self._folder_path: str = folder_path
 
-        self._thumbnail_size: Tuple[int, int] = thumbnail_size  # H, W
-        self._floor_plan_size: Tuple[int, int] = floor_plan_size  # H, W
-        self._floor_plan_scale: Tuple[int, int] = floor_plan_scale  # H, W
+        self._floor_plan_scale: HW = floor_plan_scale
 
         self._model = None
 
@@ -29,18 +40,18 @@ class Workspace(metaclass=ABCMeta):
         return self._folder_path
 
     @property
-    def thumbnail_size(self) -> Tuple[int, int]:
-        return self._thumbnail_size
-
-    @property
-    def floor_plan_size(self) -> Tuple[int, int]:
-        return self._floor_plan_size
-
-    @property
-    def floor_plan_scale(self) -> Tuple[int, int]:
+    def floor_plan_scale(self) -> HW:
         return self._floor_plan_scale
 
+    @abstractmethod
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float) -> XYZ:
+        pass
+
     def render_image(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> np.ndarray:
+
+        coords: XYZ = self._transform_relative_coordinates(rel_x, rel_y)
+        print(coords)
+
         image_array = np.random.randint(low=0, high=255, size=(600, 800, 3), dtype=np.uint8)
 
         return image_array  # H, W, C
@@ -51,11 +62,21 @@ class OfficeTokyoWorkspace(Workspace):
     def __init__(self) -> None:
         super().__init__(name="Office Tokyo",
                          folder_path="application/workspaces/office_tokyo/",
-                         thumbnail_size=(239, 308),
-                         floor_plan_size=(794, 786),
-                         floor_plan_scale=(600, 600))
+                         floor_plan_scale=HW(600, 600))
 
-        self.scale = 800
+        self._x_max = 1.5
+        self._x_min = -1.2
+
+        self._fixed_y = -0.5
+
+        self._z_max = 1.2
+        self._z_min = -0.6
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float) -> XYZ:
+        x = (self._x_min - self._x_max) * rel_y + self._x_max
+        z = (self._z_min - self._z_max) * rel_x + self._z_max
+
+        return XYZ(x, self._fixed_y, z)
 
 
 class OfficeNewYorkWorkspace(Workspace):
@@ -63,11 +84,12 @@ class OfficeNewYorkWorkspace(Workspace):
     def __init__(self) -> None:
         super().__init__(name="Office New York",
                          folder_path="application/workspaces/office_new_york/",
-                         thumbnail_size=(243, 344),
-                         floor_plan_size=(802, 1072),
-                         floor_plan_scale=(600, 800))
+                         floor_plan_scale=HW(600, 800))
 
-        self.scale = 1000
+        self._fixed_y = -0.5
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float) -> XYZ:
+        return XYZ(rel_x, self._fixed_y, rel_y)
 
 
 class OfficeGeneveWorkspace(Workspace):
@@ -75,11 +97,12 @@ class OfficeGeneveWorkspace(Workspace):
     def __init__(self) -> None:
         super().__init__(name="Office Geneve",
                          folder_path="application/workspaces/office_geneve/",
-                         thumbnail_size=(257, 349),
-                         floor_plan_size=(807, 1380),
-                         floor_plan_scale=(600, 1000))
+                         floor_plan_scale=HW(600, 1000))
 
-        self.scale = 1000
+        self._fixed_y = -0.5
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float) -> XYZ:
+        return XYZ(rel_x, self._fixed_y, rel_y)
 
 
 class OfficeBelgradeWorkspace(Workspace):
@@ -87,8 +110,9 @@ class OfficeBelgradeWorkspace(Workspace):
     def __init__(self) -> None:
         super().__init__(name="Office Belgrade",
                          folder_path="application/workspaces/office_belgrade/",
-                         thumbnail_size=(262, 348),
-                         floor_plan_size=(890, 1102),
-                         floor_plan_scale=(600, 750))
+                         floor_plan_scale=HW(600, 750))
 
-        self.scale = 1000
+        self._fixed_y = -0.5
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float) -> XYZ:
+        return XYZ(rel_x, self._fixed_y, rel_y)
