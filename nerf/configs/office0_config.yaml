@@ -1,10 +1,10 @@
 
 experiment:
-  save_dir: "C:/Users/psiml8/Desktop/Project/training_logs/lego/log4/" 
-  dataset_dir: "C:/Users/psiml8/Desktop/Project/datasets/lego/"
-  convention: "opengl"
-  width: 100
-  height: 100
+  save_dir: "experiments/test/"
+  dataset_dir: "C:/Users/jdmitrovic/Desktop/NeRF-Workspaces-Explorer/Replica_Dataset/office_0/Sequence_1/"
+  convention: "opencv"
+  width: 320
+  height: 240
   gpu: "0"
 
   enable_depth: True
@@ -30,21 +30,21 @@ render:
     raw_noise_std: 1 # 'std dev of noise added to regularize sigma_a output, 1e0 recommended')
     test_viz_factor: 1 # down scaling factor when rendering test and training images
     no_batching: True # True-sample random pixels from random images; False-sample from all random pixels from all images
-    depth_range: [2.0, 6.0]
+    depth_range: [0.1, 10.0]
     white_bkgd: false  # set to render synthetic data on a white bkgd (always use for dvoxels
     
 train:
     lrate: 5e-4
     lrate_decay_rate: 0.1
-    lrate_decay_steps: 35000
-    N_iters: 50000
+    lrate_decay_steps: 50000
+    N_iters: 200000
 
 logging:
     step_log_print: 1  # frequency of console print
-    step_log_tensorboard: 100 # frequency of Tensorboard logs
-    step_save_ckpt: 10000 # frequency of storing checkpoints
-    step_render_test: 250 # frequency of rendering on unseen data
-    step_render_train: 250 # frequency of rendering on training data
-    
+    step_log_tensorboard: 500 # frequency of Tensorboard logs
+    step_save_ckpt: 20000 # frequency of storing checkpoints
+    step_render_test: 5000 # frequency of rendering on unseen data
+    step_render_train: 5000 # frequency of rendering on training data
+
 video:
-    prev_ckpt_path: "C:/Users/psiml8/Desktop/Project/training_logs/lego/log3/checkpoints/050000.ckpt" 
+    prev_ckpt_path: "C:/Users/psiml8/Desktop/Project/training_logs/room_0/sequence_2/log1/checkpoints/140000.ckpt" 
