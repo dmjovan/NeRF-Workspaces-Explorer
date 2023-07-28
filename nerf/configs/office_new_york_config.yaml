@@ -1,0 +1,43 @@
+experiment:
+  convention: "opencv"
+  width: 320
+  height: 240
+  gpu: "0"
+  enable_depth: True
+  endpoint_feat: False
+
+training:
+  n_iterations: 200000
+  learning_rate: 5e-4
+  learning_rate_decay_rate: 0.1
+  learning_rate_decay_steps: 50000
+
+model:
+  net_depth: 8
+  net_width: 256
+  net_depth_fine: 8
+  net_width_fine: 256
+  chunk: 1024*32 # number of rays processed in parallel, decrease if running out of memory
+  net_chunk: 1024*32 # number of pts sent through network in parallel, decrease if running out of memory
+
+rendering:
+  n_rays: 32*32*1 # average number of rays sampled from each sample within a batch
+  n_samples: 64 # number of different times to sample along each ray.
+  n_importance: 128 # number of additional fine samples per ray
+  perturb: 1
+  use_view_dirs: True
+  i_embed: 0 # 'set 0 for default positional encoding, -1 for none'
+  multires: 10 # log2 of max freq for positional encoding (3D location)'
+  multires_views: 4 # 'log2 of max freq for positional encoding (2D direction)'
+  raw_noise_std: 1 # 'std dev of noise added to regularize sigma_a output, 1e0 recommended')
+  test_viz_factor: 1 # down scaling factor when rendering test and training images
+  no_batching: True # True-sample random pixels from random images; False-sample from all random pixels from all images
+  depth_range: [ 0.1, 10.0 ]
+  white_background: False  # set to render synthetic data on a white background
+
+logging:
+  step_log_print: 1  # frequency of console print
+  step_log_tensorboard: 500 # frequency of Tensorboard logs
+  step_save_ckpt: 20000 # frequency of storing checkpoints
+  step_render_test: 5000 # frequency of rendering on unseen data
+  step_render_train: 5000 # frequency of rendering on training data

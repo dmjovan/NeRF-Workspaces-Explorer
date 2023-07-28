@@ -1,31 +1,74 @@
 import math
 import os
 import time
+from typing import Dict
 
 import imageio
 from imgviz import depth2rgb
 from tqdm import tqdm
 
+from nerf.configs.config_parser import ConfigParser
 from nerf.datasets.replica_dataset import ReplicaDataset
 from nerf.models.embedder import get_embedder
 from nerf.models.model_utils import *
 from nerf.models.nerf_model import NeRF
 from nerf.models.rays import sampling_index, sample_pdf, create_rays
 from nerf.training.training_utils import *
-from nerf.visualisation.tensorboard_vis import TensorboardVisualizer
+from nerf.visualisation.tensorboard_writer import TensorboardWriter
 from nerf.visualisation.video_utils import *
+
+EXPERIMENTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "experiments")
+
 
 class NeRFTrainer:
 
-    def __init__(self, config):
+    def __init__(self, office_name: str, config: Dict) -> None:
 
-        self.config = config
-        self.training = True
-        self.set_params()
+        self._office_name = office_name
+        self._config = config
 
-        self.dataset_name = "replica"
-        self.dataset = ReplicaDataset(config)
-        self.tensorboard = TensorboardVisualizer(config)
+        self._train_mode = True
+
+        training_dir_number = 1
+        if os.path.exists(os.path.join(EXPERIMENTS_DIR, self._office_name)):
+            training_dir_number = len(os.listdir(os.path.join(EXPERIMENTS_DIR, self._office_name))) + 1
+
+        self._save_dir = os.path.join(EXPERIMENTS_DIR, self._office_name, str(training_dir_number))
+
+        if not os.path.exists(self._save_dir):
+            os.makedirs(self._save_dir)
+
+        self._config_parser = ConfigParser(self._config)
+
+        # Setting experiment options
+        self._convention = self._config_parser.get_param(("experiment", "convention"), str)
+        self._endpoint_feat = self._config_parser.get_param(("experiment", "endpoint_feat"), bool, default=False)
+
+        # Setting training options
+        self._learning_rate = self._config_parser.get_param(("training", "learning_rate"), float)
+        self._learning_rate_decay_rate = self._config_parser.get_param(("training", "learning_rate_decay_rate"), float)
+        self._learning_rate_decay_steps = self._config_parser.get_param(("training", "learning_rate_decay_steps"),
+                                                                        float)
+
+        # Setting model options
+        self._net_chunk = eval(self._config_parser.get_param(("model", "net_chunk"), str))
+        self._chunk = eval(self._config_parser.get_param(("model", "chunk"), str))
+
+        # Setting rendering options
+        self._n_rays = eval(self._config_parser.get_param(("rendering", "n_rays"), str))
+        self._n_samples = self._config_parser.get_param(("rendering", "n_samples"), int)
+        self._n_importance = self._config_parser.get_param(("rendering", "n_importance"), int)
+        self._use_view_dirs = self._config_parser.get_param(("rendering", "use_view_dirs"), bool)
+        self._raw_noise_std = self._config_parser.get_param(("rendering", "raw_noise_std"), float)
+        self._white_bkgd = self._config_parser.get_param(("rendering", "white_background"), bool)
+        self._perturb = self._config_parser.get_param(("rendering", "perturb"), float)
+        self._no_batching = self._config_parser.get_param(("rendering", "no_batching"), bool)
+
+        self._dataset = ReplicaDataset(self._office_name, self._config)
+
+        print(self._dataset)
+
+        self._tensorboard_visualizer = TensorboardWriter(self._save_dir, self._config)
 
         # setting params for data from dataset
         self.set_data_params()
@@ -39,42 +82,10 @@ class NeRFTrainer:
         # create rays in world coordinates
         self.init_rays()
 
-    def set_params(self):
-
-        # experiment options
-        self.convention = self.config["experiment"]["convention"]
-        self.endpoint_feat = self.config["experiment"]["endpoint_feat"] if "endpoint_feat" in self.config[
-            "experiment"].keys() else False
-
-        # training options
-        self.lrate = float(self.config["train"]["lrate"])
-        self.lrate_decay_rate = float(self.config["train"]["lrate_decay_rate"])
-        self.lrate_decay_steps = float(self.config["train"]["lrate_decay_steps"])
-
-        # model options
-        self.netchunk = eval(self.config["model"]["netchunk"]) if isinstance(self.config["model"]["netchunk"], str) else \
-        self.config["model"]["netchunk"]
-        self.chunk = eval(self.config["model"]["chunk"]) if isinstance(self.config["model"]["chunk"], str) else \
-        self.config["model"]["chunk"]
-
-        # rendering options
-        self.n_rays = eval(self.config["render"]["N_rays"]) if isinstance(self.config["render"]["N_rays"], str) else \
-        self.config["render"]["N_rays"]
-        self.N_samples = self.config["render"]["N_samples"]
-        self.N_importance = self.config["render"]["N_importance"]
-        self.use_viewdir = self.config["render"]["use_viewdirs"]
-        self.raw_noise_std = self.config["render"]["raw_noise_std"]
-        self.white_bkgd = self.config["render"]["white_bkgd"]
-        self.perturb = self.config["render"]["perturb"]
-        self.no_batching = self.config["render"]["no_batching"]
-
-        # logging optins
-        self.save_dir = self.config["experiment"]["save_dir"]
-
     def set_data_params(self):
 
-        self.H = self.config["experiment"]["height"]
-        self.W = self.config["experiment"]["width"]
+        self.H = self._config["experiment"]["image_height"]
+        self.W = self._config["experiment"]["image_width"]
 
         self.n_pix = self.H * self.W
         self.aspect_ratio = self.W / self.H
@@ -88,11 +99,11 @@ class NeRFTrainer:
         self.cx = (self.W - 1.0) / 2.0
         self.cy = (self.H - 1.0) / 2.0
 
-        self.depth_close_bound, self.depth_far_bound = self.config["render"]["depth_range"]
+        self.depth_close_bound, self.depth_far_bound = self._config["render"]["depth_range"]
         self.c2w_staticcam = None
 
         # use scaled size for test and visualisation purpose
-        self.test_viz_factor = int(self.config["render"]["test_viz_factor"])
+        self.test_viz_factor = int(self._config["render"]["test_viz_factor"])
         self.H_scaled = self.H // self.test_viz_factor
         self.W_scaled = self.W // self.test_viz_factor
 
@@ -105,21 +116,21 @@ class NeRFTrainer:
     def prepare_data(self):
 
         # shift numpy data to torch
-        train_samples = self.dataset.train_samples
-        test_samples = self.dataset.test_samples
+        train_samples = self._dataset.train_samples
+        test_samples = self._dataset.test_samples
 
-        self.train_ids = self.dataset.train_ids
-        self.test_ids = self.dataset.test_ids
+        self.train_ids = self._dataset._train_ids
+        self.test_ids = self._dataset.test_ids
 
-        self.num_train = self.dataset.train_num
-        self.num_test = self.dataset.test_num
+        self.num_train = self._dataset.train_num
+        self.num_test = self._dataset.test_num
 
         ##### Train Data #####
 
         # RGB
         self.train_image = torch.from_numpy(train_samples["image"])
         self.train_image_scaled = F.interpolate(self.train_image.permute(0, 3, 1, 2, ),
-                                                scale_factor=1 / self.config["render"]["test_viz_factor"],
+                                                scale_factor=1 / self._config["render"]["test_viz_factor"],
                                                 mode='bilinear').permute(0, 2, 3, 1)
         # Depth
         self.train_depth = torch.from_numpy(train_samples["depth"])
@@ -128,7 +139,7 @@ class NeRFTrainer:
              train_samples["depth"]], axis=0)  # [num_test, H, W, 3]
         # process the depth for evaluation purpose
         self.train_depth_scaled = F.interpolate(torch.unsqueeze(self.train_depth, dim=1).float(),
-                                                scale_factor=1 / self.config["render"]["test_viz_factor"],
+                                                scale_factor=1 / self._config["render"]["test_viz_factor"],
                                                 mode='bilinear').squeeze(1).cpu().numpy()
         # pose 
         self.train_pose = torch.from_numpy(train_samples["pose"]).float()
@@ -139,7 +150,7 @@ class NeRFTrainer:
         self.test_image = torch.from_numpy(test_samples["image"])  # [num_test, H, W, 3]
         # scale the test image for evaluation purpose
         self.test_image_scaled = F.interpolate(self.test_image.permute(0, 3, 1, 2, ),
-                                               scale_factor=1 / self.config["render"]["test_viz_factor"],
+                                               scale_factor=1 / self._config["render"]["test_viz_factor"],
                                                mode='bilinear').permute(0, 2, 3, 1)
         # Depth
         self.test_depth = torch.from_numpy(test_samples["depth"])  # [num_test, H, W]
@@ -148,7 +159,7 @@ class NeRFTrainer:
              test_samples["depth"]], axis=0)  # [num_test, H, W, 3]
         # process the depth for evaluation purpose
         self.test_depth_scaled = F.interpolate(torch.unsqueeze(self.test_depth, dim=1).float(),
-                                               scale_factor=1 / self.config["render"]["test_viz_factor"],
+                                               scale_factor=1 / self._config["render"]["test_viz_factor"],
                                                mode='bilinear').squeeze(1).cpu().numpy()
         # pose 
         self.test_pose = torch.from_numpy(test_samples["pose"]).float()  # [num_test, 4, 4]
@@ -167,9 +178,11 @@ class NeRFTrainer:
             self.rand_idx = torch.randperm(self.num_train * self.H * self.W)
 
         # add datasets to tfboard for comparison to rendered images
-        self.tensorboard.tb_writer.add_image('Train/rgb_ground_truth', train_samples["image"], 0, dataformats='NHWC')
+        self._tensorboard_visualizer._summary_writer.add_image('Train/rgb_ground_truth', train_samples["image"], 0,
+                                                               dataformats='NHWC')
 
-        self.tensorboard.tb_writer.add_image('Test/rgb_ground_truth', test_samples["image"], 0, dataformats='NHWC')
+        self._tensorboard_visualizer._summary_writer.add_image('Test/rgb_ground_truth', test_samples["image"], 0,
+                                                               dataformats='NHWC')
 
     def init_rays(self):
 
@@ -184,8 +197,8 @@ class NeRFTrainer:
                            self.cy,
                            self.depth_close_bound,
                            self.depth_far_bound,
-                           use_viewdirs=self.use_viewdir,
-                           convention=self.convention)
+                           use_viewdirs=self.use_view_dirs,
+                           convention=self._convention)
 
         rays_vis = create_rays(self.num_train,
                                self.train_pose,
@@ -197,8 +210,8 @@ class NeRFTrainer:
                                self.cy_scaled,
                                self.depth_close_bound,
                                self.depth_far_bound,
-                               use_viewdirs=self.use_viewdir,
-                               convention=self.convention)
+                               use_viewdirs=self.use_view_dirs,
+                               convention=self._convention)
 
         rays_test = create_rays(self.num_test,
                                 self.test_pose,
@@ -210,8 +223,8 @@ class NeRFTrainer:
                                 self.cy_scaled,
                                 self.depth_close_bound,
                                 self.depth_far_bound,
-                                use_viewdirs=self.use_viewdir,
-                                convention=self.convention)
+                                use_viewdirs=self.use_view_dirs,
+                                convention=self._convention)
 
         # init rays
         self.rays = rays.cuda()  # [num_images, H*W, 11]
@@ -238,7 +251,7 @@ class NeRFTrainer:
 
         if no_batching:  # sample random pixels from one random images
 
-            index_batch, index_hw = sampling_index(self.n_rays, num_img, h, w)
+            index_batch, index_hw = sampling_index(self._n_rays, num_img, h, w)
             sampled_rays = rays[index_batch, index_hw, :]
 
             flat_sampled_rays = sampled_rays.reshape([-1, ray_dim]).float()
@@ -246,13 +259,13 @@ class NeRFTrainer:
 
         else:  # sample from all random pixels
 
-            index_hw = self.rand_idx[self.i_batch: self.i_batch + self.n_rays]
+            index_hw = self.rand_idx[self.i_batch: self.i_batch + self._n_rays]
 
             flat_rays = rays.reshape([-1, ray_dim]).float()
             flat_sampled_rays = flat_rays[index_hw, :]
             gt_image = image.reshape(-1, 3)[index_hw, :]
 
-            self.i_batch += self.n_rays
+            self.i_batch += self._n_rays
             if self.i_batch >= total_ray_num:
                 print("Shuffle data after an epoch!")
                 self.rand_idx = torch.randperm(total_ray_num)
@@ -309,8 +322,8 @@ class NeRFTrainer:
 
         z_vals = z_vals.expand([N_rays, self.N_samples])
 
-        if self.perturb > 0. and self.training:  # perturb sampling depths (z_vals)
-            if self.training is True:  # only add perturbation during training intead of testing
+        if self.perturb > 0. and self._train_mode:  # perturb sampling depths (z_vals)
+            if self._train_mode is True:  # only add perturbation during train_mode intead of testing
                 # get intervals between samples
                 mids = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
                 upper = torch.cat([mids, z_vals[..., -1:]], -1)
@@ -323,9 +336,9 @@ class NeRFTrainer:
         pts_coarse_sampled = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :,
                                                                            None]  # [N_rays, N_samples, 3]
 
-        raw_noise_std = self.raw_noise_std if self.training else 0
+        raw_noise_std = self.raw_noise_std if self._train_mode else 0
         raw_coarse = run_network(pts_coarse_sampled, viewdirs, self.nerf_net_coarse,
-                                 self.embed_fn, self.embeddirs_fn, netchunk=self.netchunk)
+                                 self.embed_fn, self.embeddirs_fn, netchunk=self._net_chunk)
 
         rgb_coarse, disp_coarse, acc_coarse, weights_coarse, depth_coarse, feat_map_coarse = raw2outputs(raw_coarse,
                                                                                                          z_vals, rays_d,
@@ -336,7 +349,7 @@ class NeRFTrainer:
         if self.N_importance > 0:
             z_vals_mid = .5 * (z_vals[..., 1:] + z_vals[..., :-1])  # (N_rays, N_samples-1) interval mid points
             z_samples = sample_pdf(z_vals_mid, weights_coarse[..., 1:-1], self.N_importance,
-                                   det=(self.perturb == 0.) or (not self.training))
+                                   det=(self.perturb == 0.) or (not self._train_mode))
             z_samples = z_samples.detach()
             # detach so that grad doesn't propogate to weights_coarse from here
             # values are interleaved actually, so maybe can do better than sort?
@@ -345,13 +358,13 @@ class NeRFTrainer:
             pts_fine_sampled = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :,
                                                                              None]  # [N_rays, N_samples + N_importance, 3]
 
-            raw_fine = run_network(pts_fine_sampled, viewdirs, lambda x: self.nerf_net_fine(x, self.endpoint_feat),
-                                   self.embed_fn, self.embeddirs_fn, netchunk=self.netchunk)
+            raw_fine = run_network(pts_fine_sampled, viewdirs, lambda x: self.nerf_net_fine(x, self._endpoint_feat),
+                                   self.embed_fn, self.embeddirs_fn, netchunk=self._net_chunk)
 
             rgb_fine, disp_fine, acc_fine, weights_fine, depth_fine, feat_map_fine = raw2outputs(raw_fine, z_vals,
                                                                                                  rays_d, raw_noise_std,
                                                                                                  self.white_bkgd,
-                                                                                                 endpoint_feat=self.endpoint_feat)
+                                                                                                 endpoint_feat=self._endpoint_feat)
 
         ret = {}
         ret['raw_coarse'] = raw_coarse
@@ -367,7 +380,7 @@ class NeRFTrainer:
         ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
         ret['raw_fine'] = raw_fine  # model's raw, unprocessed predictions.
 
-        if self.endpoint_feat:
+        if self._endpoint_feat:
             ret['feat_map_fine'] = feat_map_fine
 
         for k in ret:
@@ -383,34 +396,34 @@ class NeRFTrainer:
             Instantiate NeRF's MLP model 
         """
 
-        embed_fn, input_ch = get_embedder(self.config["render"]["multires"], self.config["render"]["i_embed"],
+        embed_fn, input_ch = get_embedder(self._config["render"]["multires"], self._config["render"]["i_embed"],
                                           scalar_factor=10)
 
         input_ch_views = 0
         embeddirs_fn = None
-        if self.config["render"]["use_viewdirs"]:
-            embeddirs_fn, input_ch_views = get_embedder(self.config["render"]["multires_views"],
-                                                        self.config["render"]["i_embed"], scalar_factor=1)
+        if self._config["render"]["use_viewdirs"]:
+            embeddirs_fn, input_ch_views = get_embedder(self._config["render"]["multires_views"],
+                                                        self._config["render"]["i_embed"], scalar_factor=1)
 
         # creating NeRF model - coarse
-        model = NeRF(D=self.config["model"]["netdepth"],
-                     W=self.config["model"]["netwidth"],
+        model = NeRF(D=self._config["model"]["netdepth"],
+                     W=self._config["model"]["netwidth"],
                      input_ch=input_ch,
                      output_ch=5,
                      skips=[4],
                      input_ch_views=input_ch_views,
-                     use_viewdirs=self.config["render"]["use_viewdirs"]).cuda()
+                     use_viewdirs=self._config["render"]["use_viewdirs"]).cuda()
 
         grad_vars = list(model.parameters())
 
         # creating NeRF model - fine
-        model_fine = NeRF(D=self.config["model"]["netdepth_fine"],
-                          W=self.config["model"]["netwidth_fine"],
+        model_fine = NeRF(D=self._config["model"]["netdepth_fine"],
+                          W=self._config["model"]["netwidth_fine"],
                           input_ch=input_ch,
                           output_ch=5,
                           skips=[4],
                           input_ch_views=input_ch_views,
-                          use_viewdirs=self.config["render"]["use_viewdirs"]).cuda()
+                          use_viewdirs=self._config["render"]["use_viewdirs"]).cuda()
 
         grad_vars += list(model_fine.parameters())
 
@@ -464,24 +477,24 @@ class NeRFTrainer:
             param_group['lr'] = new_lrate
 
         # Visualization
-        if global_step % float(self.config["logging"]["step_log_tensorboard"]) == 0:
-            self.tensorboard.visualize_scalars(global_step,
-                                               [img_loss_coarse, img_loss_fine, total_loss],
-                                               ['Train/Loss/rgb_loss_coarse', 'Train/Loss/rgb_loss_fine',
-                                                'Train/Loss/total_loss'])
+        if global_step % float(self._config["logging"]["step_log_tensorboard"]) == 0:
+            self._tensorboard_visualizer.visualize_scalars(global_step,
+                                                           [img_loss_coarse, img_loss_fine, total_loss],
+                                                           ['Train/Loss/rgb_loss_coarse', 'Train/Loss/rgb_loss_fine',
+                                                            'Train/Loss/total_loss'])
 
             # add raw transparancy value into tfb histogram
             trans_coarse = output_dict["raw_coarse"][..., 3]
-            self.tensorboard.visualize_histogram(global_step, trans_coarse, 'trans_coarse')
+            self._tensorboard_visualizer.visualize_histogram(global_step, trans_coarse, 'trans_coarse')
 
             trans_fine = output_dict['raw_fine'][..., 3]
-            self.tensorboard.visualize_histogram(global_step, trans_fine, 'trans_fine')
+            self._tensorboard_visualizer.visualize_histogram(global_step, trans_fine, 'trans_fine')
 
-            self.tensorboard.visualize_scalars(global_step, [psnr_coarse, psnr_fine],
-                                               ['Train/Metric/psnr_coarse', 'Train/Metric/psnr_fine'])
+            self._tensorboard_visualizer.visualize_scalars(global_step, [psnr_coarse, psnr_fine],
+                                                           ['Train/Metric/psnr_coarse', 'Train/Metric/psnr_fine'])
 
         # Saving checkpoint
-        if global_step % float(self.config["logging"]["step_save_ckpt"]) == 0:
+        if global_step % float(self._config["logging"]["step_save_ckpt"]) == 0:
 
             ckpt_dir = os.path.join(self.save_dir, "checkpoints")
             if not os.path.exists(ckpt_dir):
@@ -497,12 +510,12 @@ class NeRFTrainer:
             print(f"Saved checkpoints at {ckpt_file}")
 
         # Rendering training images
-        if global_step % self.config["logging"]["step_render_train"] == 0 and global_step > 0:
-            self.training = False
+        if global_step % self._config["logging"]["step_render_train"] == 0 and global_step > 0:
+            self._train_mode = False
             self.nerf_net_coarse.eval()
             self.nerf_net_fine.eval()
 
-            train_save_dir = os.path.join(self.config["experiment"]["save_dir"], "train_render",
+            train_save_dir = os.path.join(self._config["experiment"]["save_dir"], "train_render",
                                           'step_{:06d}'.format(global_step))
             os.makedirs(train_save_dir, exist_ok=True)
 
@@ -511,7 +524,7 @@ class NeRFTrainer:
 
             print('Saved rendered images from training set')
 
-            self.training = True
+            self._train_mode = True
             self.nerf_net_coarse.train()
             self.nerf_net_fine.train()
 
@@ -519,21 +532,21 @@ class NeRFTrainer:
                 batch_train_img_mse = img2mse(torch.from_numpy(rgbs), self.train_image_scaled.cpu())
                 batch_train_img_psnr = mse2psnr(batch_train_img_mse)
 
-                self.tensorboard.visualize_scalars(global_step, [batch_train_img_psnr, batch_train_img_mse],
-                                                   ['Train/Metric/batch_PSNR', 'Train/Metric/batch_MSE'])
+                self._tensorboard_visualizer.visualize_scalars(global_step, [batch_train_img_psnr, batch_train_img_mse],
+                                                               ['Train/Metric/batch_PSNR', 'Train/Metric/batch_MSE'])
 
             imageio.mimwrite(os.path.join(train_save_dir, 'rgb.mp4'), to8b_np(rgbs), fps=30, quality=8)
 
             # add rendered image into tf-board
-            self.tensorboard.tb_writer.add_image('Train/rgb', rgbs, global_step, dataformats='NHWC')
+            self._tensorboard_visualizer._summary_writer.add_image('Train/rgb', rgbs, global_step, dataformats='NHWC')
 
         # Rendering test images
-        if global_step % self.config["logging"]["step_render_test"] == 0 and global_step > 0:
-            self.training = False
+        if global_step % self._config["logging"]["step_render_test"] == 0 and global_step > 0:
+            self._train_mode = False
             self.nerf_net_coarse.eval()
             self.nerf_net_fine.eval()
 
-            test_save_dir = os.path.join(self.config["experiment"]["save_dir"], "test_render",
+            test_save_dir = os.path.join(self._config["experiment"]["save_dir"], "test_render",
                                          'step_{:06d}'.format(global_step))
             os.makedirs(test_save_dir, exist_ok=True)
 
@@ -542,23 +555,23 @@ class NeRFTrainer:
 
             print('Saved rendered images from test set')
 
-            self.training = True
+            self._train_mode = True
             self.nerf_net_coarse.train()
             self.nerf_net_fine.train()
 
             with torch.no_grad():
                 batch_test_img_mse = img2mse(torch.from_numpy(rgbs), self.test_image_scaled.cpu())
                 batch_test_img_psnr = mse2psnr(batch_test_img_mse)
-                self.tensorboard.visualize_scalars(global_step, [batch_test_img_psnr, batch_test_img_mse],
-                                                   ['Test/Metric/batch_PSNR', 'Test/Metric/batch_MSE'])
+                self._tensorboard_visualizer.visualize_scalars(global_step, [batch_test_img_psnr, batch_test_img_mse],
+                                                               ['Test/Metric/batch_PSNR', 'Test/Metric/batch_MSE'])
 
             imageio.mimwrite(os.path.join(test_save_dir, 'rgb.mp4'), to8b_np(rgbs), fps=30, quality=8)
 
             # add rendered image into tensor board
-            self.tensorboard.tb_writer.add_image('Test/rgb', rgbs, global_step, dataformats='NHWC')
+            self._tensorboard_visualizer._summary_writer.add_image('Test/rgb', rgbs, global_step, dataformats='NHWC')
 
         # Printing progress
-        if global_step % self.config["logging"]["step_log_print"] == 0:
+        if global_step % self._config["logging"]["step_log_print"] == 0:
             tqdm.write(f"[TRAIN] Iter: {global_step} "
                        f"Loss: {total_loss.item()}, rgb_coarse: {img_loss_coarse.item()}, rgb_fine: {img_loss_fine.item()}, "
                        f"PSNR_coarse: {psnr_coarse.item()}, PSNR_fine: {psnr_fine.item()}")
@@ -594,13 +607,13 @@ class NeRFTrainer:
 
     def create_video(self, video_name, use_current_models=False):
 
-        ckpt_path = self.config["video"]["prev_ckpt_path"]
+        ckpt_path = self._config["video"]["prev_ckpt_path"]
 
         print("here", os.path.exists(ckpt_path))
 
         if os.path.exists(ckpt_path) and not use_current_models:
 
-            self.training = False
+            self._train_mode = False
 
             checkpoint = torch.load(ckpt_path)
             self.nerf_net_coarse.load_state_dict(checkpoint['network_coarse_state_dict'])
@@ -616,26 +629,19 @@ class NeRFTrainer:
 
         else:
 
-            self.training = False
+            self._train_mode = False
 
             self.nerf_net_coarse.eval()
             self.nerf_net_fine.eval()
 
-        video_save_dir = os.path.join(self.config["experiment"]["save_dir"], "videos")
+        video_save_dir = os.path.join(self._config["experiment"]["save_dir"], "videos")
 
         if not os.path.exists(video_save_dir):
             os.makedirs(video_save_dir)
 
         with torch.no_grad():
 
-            if self.dataset_name == "lego":
-                poses = generate_new_poses(z=4.0, phi=-30.0)
-
-            elif self.dataset_name == "replica":
-                poses = generate_new_poses(x=0.0)
-
-            elif self.dataset_name == "custom":
-                poses = generate_new_poses(z=0.3, phi=-30.0)
+            poses = generate_new_poses(x=0.0)
 
             rays = create_rays(poses.shape[0],
                                poses,
@@ -647,13 +653,13 @@ class NeRFTrainer:
                                self.cy_scaled,
                                self.depth_close_bound,
                                self.depth_far_bound,
-                               use_viewdirs=self.use_viewdir,
-                               convention=self.convention)
+                               use_viewdirs=self.use_view_dirs,
+                               convention=self._convention)
 
             rgbs = self.render_path(rays, save_dir=video_save_dir, save_img=False)
 
             imageio.mimwrite(os.path.join(video_save_dir, video_name), to8b_np(rgbs), fps=30, quality=8)
 
-            self.training = True
+            self._train_mode = True
             self.nerf_net_coarse.train()
             self.nerf_net_fine.train()

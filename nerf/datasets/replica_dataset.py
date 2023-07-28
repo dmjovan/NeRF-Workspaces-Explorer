@@ -1,74 +1,157 @@
-import os
-import cv2
 import glob
+import os
+from enum import Enum
+from typing import Dict, Tuple, Union, List
+
+import cv2
 import numpy as np
 from torch.utils.data import Dataset
 
+from nerf.configs.config_parser import ConfigParser
+
+DATASETS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "replica_dataset")
+
+
+class DatasetType(Enum):
+    TRAIN = "train"
+    TEST = "test"
+
+
 class ReplicaDataset(Dataset):
 
-    def __init__(self, config):
+    def __init__(self, office_name: str, config: Dict) -> None:
 
-        self.traj_file = os.path.join(config["experiment"]["dataset_dir"], "traj_w_c.txt")
-        self.rgb_dir = os.path.join(config["experiment"]["dataset_dir"], "rgb")
-        self.depth_dir = os.path.join(config["experiment"]["dataset_dir"], "depth")
+        # Path to the dataset folder
+        self._dataset_dir = os.path.join(DATASETS_PATH, office_name, "Sequence_1")
 
-        self.train_ids = list(range(0, len(os.listdir(self.rgb_dir)), 5))
-        self.train_num = len(self.train_ids)
+        # Gathering information about image height and width
+        self._config_parser = ConfigParser(config)
+        self._img_h = self._config_parser.get_param(("experiment", "image_height"), int)
+        self._img_w = self._config_parser.get_param(("experiment", "image_width"), int)
 
-        self.test_ids = [x + 2 for x in self.train_ids]
-        self.test_num = len(self.test_ids)
+        # Camera poses during trajectory execution
+        self._traj_file = os.path.join(self._dataset_dir, "traj_w_c.txt")
 
-        self.img_h=config["experiment"]["height"]
-        self.img_w=config["experiment"]["width"]
+        # RGB images for each camera pose
+        self._rgb_dir = os.path.join(self._dataset_dir, "rgb")
 
-        self.poses = np.loadtxt(self.traj_file, delimiter=" ").reshape(-1, 4, 4)
+        # Depth for each camera pose
+        self._depth_dir = os.path.join(self._dataset_dir, "depth")
 
-        self.rgb_list = sorted(glob.glob(self.rgb_dir + '/rgb*.png'), key=lambda file_name: int(file_name.split("_")[-1][:-4]))
-        self.depth_list = sorted(glob.glob(self.depth_dir + '/depth*.png'), key=lambda file_name: int(file_name.split("_")[-1][:-4]))
+        # Gathering indices for train and test datasets
+        self._train_ids = list(range(0, len(os.listdir(self._rgb_dir)), 5))
+        self._test_ids = [x + 2 for x in self._train_ids]
 
-        self.train_samples = {'image': [], 'depth': [], 'pose': []}
-        self.test_samples = {'image': [], 'depth': [], 'pose': []}
+        # Loading camera poses and reshaping them into matrix Nx4x4
+        self._camera_poses = np.loadtxt(self._traj_file, delimiter=" ").reshape(-1, 4, 4)
 
-       # training samples
-        for idx in self.train_ids:
-            image = cv2.imread(self.rgb_list[idx])[:,:,::-1] / 255.0  # change from BGR uinit 8 to RGB float
-            depth = cv2.imread(self.depth_list[idx], cv2.IMREAD_UNCHANGED) / 1000.0  # uint16 mm depth, then turn depth from mm to meter
+        # Sorted RGB and depth images
+        self._rgb_images = sorted(glob.glob(self._rgb_dir + '/rgb*.png'),
+                                  key=lambda file_name: int(file_name.split("_")[-1][:-4]))
+        self._depth_images = sorted(glob.glob(self._depth_dir + '/depth*.png'),
+                                    key=lambda file_name: int(file_name.split("_")[-1][:-4]))
 
-            if (self.img_h is not None and self.img_h != image.shape[0]) or (self.img_w is not None and self.img_w != image.shape[1]):
-                image = cv2.resize(image, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
-                depth = cv2.resize(depth, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
+        # Populating TRAIN dataset
+        self._train_dataset = {"rgb": [],
+                               "depth": [],
+                               "camera_pose": []}
+        self._populate_dataset_samples(DatasetType.TRAIN)
 
-            pose = self.poses[idx]
+        # Populating TEST dataset
+        self._test_dataset = {"rgb": [],
+                              "depth": [],
+                              "camera_pose": []}
+        self._populate_dataset_samples(DatasetType.TRAIN)
 
-            self.train_samples["image"].append(image)
-            self.train_samples["depth"].append(depth)
-            self.train_samples["pose"].append(pose)
+    @property
+    def train_dataset(self) -> Dict[str, Union[List, np.ndarray]]:
+        return self._train_dataset
 
-        # test samples
-        for idx in self.test_ids:
-            image = cv2.imread(self.rgb_list[idx])[:,:,::-1] / 255.0  # change from BGR uinit 8 to RGB float
-            depth = cv2.imread(self.depth_list[idx], cv2.IMREAD_UNCHANGED) / 1000.0  # uint16 mm depth, then turn depth from mm to meter
+    @property
+    def test_dataset(self) -> Dict[str, Union[List, np.ndarray]]:
+        return self._test_dataset
 
-            if (self.img_h is not None and self.img_h != image.shape[0]) or (self.img_w is not None and self.img_w != image.shape[1]):
-                image = cv2.resize(image, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
-                depth = cv2.resize(depth, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
-                
-            pose = self.poses[idx]
+    def __str__(self) -> str:
 
-            self.test_samples["image"].append(image)
-            self.test_samples["depth"].append(depth)
-            self.test_samples["pose"].append(pose)
+        train_dataset_len = self._train_dataset['rgb'].shape[0] if \
+            isinstance(self._train_dataset['rgb'], np.ndarray) else len(self._train_dataset['rgb'])
 
-        for key in self.test_samples.keys():  # transform list of np array to array with batch dimension
-            self.train_samples[key] = np.asarray(self.train_samples[key])
-            self.test_samples[key] = np.asarray(self.test_samples[key])
+        train_dataset_string = f"Dataset length: {train_dataset_len}\n"
 
-        print("#####################################################################")
-        print("Training Sample Summary:")
-        for key in self.train_samples.keys(): 
-            print(f"{key} has shape of {self.train_samples[key].shape}, type {self.train_samples[key].dtype} ")
-        
-        print("#####################################################################")
-        print("Testing Sample Summary:")
-        for key in self.test_samples.keys(): 
-            print(f"{key} has shape of {self.test_samples[key].shape}, type {self.test_samples[key].dtype}")
+        for key in self._train_dataset.keys():
+            train_dataset_string += f"{key} has shape of {self._train_dataset[key].shape}, " \
+                                    f"type {self._train_dataset[key].dtype}\n"
+
+        test_dataset_len = self._test_dataset['rgb'].shape[0] if \
+            isinstance(self._test_dataset['rgb'], np.ndarray) else len(self._test_dataset['rgb'])
+
+        test_dataset_string = f"Dataset length: {test_dataset_len}\n"
+
+        for key in self._test_dataset.keys():
+            test_dataset_string += f"{key} has shape of {self._test_dataset[key].shape}, " \
+                                   f"type {self._test_dataset[key].dtype}\n"
+
+        dataset_string = f"################################################################################\n" \
+                         f"------------------------------- Datasets summary  ------------------------------\n" \
+                         f"################################################################################\n" \
+                         f"----->---->---->---->---->----> Training dataset <----<----<----<----<----<-----\n" \
+                         f"{train_dataset_string}" \
+                         f"----->---->---->---->---->----> Testing dataset <-----<----<----<----<----<-----\n" \
+                         f"{test_dataset_string}" \
+                         f"################################################################################"
+
+        return dataset_string
+
+    def _populate_dataset_samples(self, dataset_type: DatasetType) -> None:
+
+        def get_rgb_and_depth_image_with_index(idx: int) -> Tuple[np.ndarray, np.ndarray]:
+
+            # Changing loaded image from BGR uint8 to RGB float
+            rgb_image = cv2.imread(self._rgb_images[idx])[:, :, ::-1] / 255.0
+
+            # Using uint16 mm for depth - scaling with 1/1000 for meters
+            depth = cv2.imread(self._depth_images[idx], cv2.IMREAD_UNCHANGED) / 1000.0
+
+            # Running interpolation for image resizing if needed
+            if (self._img_h is not None and self._img_h != rgb_image.shape[0]) or (
+                    self._img_w is not None and self._img_w != rgb_image.shape[1]):
+                rgb_image = cv2.resize(rgb_image, (self._img_w, self._img_h), interpolation=cv2.INTER_LINEAR)
+                depth = cv2.resize(depth, (self._img_w, self._img_h), interpolation=cv2.INTER_LINEAR)
+
+            return rgb_image, depth
+
+        # training samples
+        if dataset_type == DatasetType.TRAIN:
+            for idx in self._train_ids:
+                # Getting adequate RGB and depth images
+                image, depth = get_rgb_and_depth_image_with_index(idx)
+
+                # Getting adequate camera pose
+                camera_pose = self._camera_poses[idx]
+
+                self._train_dataset["rgb"].append(image)
+                self._train_dataset["depth"].append(depth)
+                self._train_dataset["camera_pose"].append(camera_pose)
+
+            # Transforming list of np.ndarrays to array with batch dimension
+            for key in self._train_dataset.keys():
+                self._train_dataset[key] = np.asarray(self._train_dataset[key])
+
+
+        elif dataset_type == DatasetType.TEST:
+
+            # test samples
+            for idx in self._test_ids:
+                # Getting adequate RGB and depth images
+                image, depth = get_rgb_and_depth_image_with_index(idx)
+
+                # Getting adequate camera pose
+                camera_pose = self._camera_poses[idx]
+
+                self._test_dataset["rgb"].append(image)
+                self._test_dataset["depth"].append(depth)
+                self._test_dataset["camera_pose"].append(camera_pose)
+
+            # Transforming list of np.ndarrays to array with batch dimension
+            for key in self._train_dataset.keys():
+                self._train_dataset[key] = np.asarray(self._train_dataset[key])
