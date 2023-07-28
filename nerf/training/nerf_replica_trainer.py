@@ -9,9 +9,9 @@ from tqdm import tqdm
 
 from nerf.configs.config_parser import ConfigParser
 from nerf.datasets.replica_dataset import ReplicaDataset
-from nerf.models.embedder import get_embedder
+from nerf.models.embedding import Embedding
 from nerf.models.model_utils import *
-from nerf.models.nerf_model import NeRF
+from nerf.models.nerf_model import NeRFModel
 from nerf.models.rays import sampling_index, sample_pdf, create_rays
 from nerf.training.training_utils import *
 from nerf.visualisation.tensorboard_writer import TensorboardWriter
@@ -20,7 +20,7 @@ from nerf.visualisation.video_utils import *
 EXPERIMENTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "experiments")
 
 
-class NeRFTrainer:
+class NeRFReplicaTrainer:
 
     def __init__(self, office_name: str, config: Dict) -> None:
 
@@ -41,7 +41,6 @@ class NeRFTrainer:
         self._config_parser = ConfigParser(self._config)
 
         # Setting experiment options
-        self._convention = self._config_parser.get_param(("experiment", "convention"), str)
         self._endpoint_feat = self._config_parser.get_param(("experiment", "endpoint_feat"), bool, default=False)
 
         # Setting training options
@@ -51,6 +50,10 @@ class NeRFTrainer:
                                                                         float)
 
         # Setting model options
+        self._net_depth_coarse = eval(self._config_parser.get_param(("model", "net_depth"), str))
+        self._net_width_coarse = eval(self._config_parser.get_param(("model", "net_width"), str))
+        self._net_depth_fine = eval(self._config_parser.get_param(("model", "net_depth_fine"), str))
+        self._net_width_fine = eval(self._config_parser.get_param(("model", "net_width_fine"), str))
         self._net_chunk = eval(self._config_parser.get_param(("model", "net_chunk"), str))
         self._chunk = eval(self._config_parser.get_param(("model", "chunk"), str))
 
@@ -58,176 +61,217 @@ class NeRFTrainer:
         self._n_rays = eval(self._config_parser.get_param(("rendering", "n_rays"), str))
         self._n_samples = self._config_parser.get_param(("rendering", "n_samples"), int)
         self._n_importance = self._config_parser.get_param(("rendering", "n_importance"), int)
+        self._num_freqs_3d = self._config_parser.get_param(("rendering", "num_freqs_3d"), int)
+        self._num_freqs_2d = self._config_parser.get_param(("rendering", "num_freqs_2d"), int)
         self._use_view_dirs = self._config_parser.get_param(("rendering", "use_view_dirs"), bool)
         self._raw_noise_std = self._config_parser.get_param(("rendering", "raw_noise_std"), float)
         self._white_bkgd = self._config_parser.get_param(("rendering", "white_background"), bool)
         self._perturb = self._config_parser.get_param(("rendering", "perturb"), float)
-        self._no_batching = self._config_parser.get_param(("rendering", "no_batching"), bool)
 
-        self._dataset = ReplicaDataset(self._office_name, self._config)
-
-        print(self._dataset)
-
+        # Tensorboard Writer initialization
         self._tensorboard_visualizer = TensorboardWriter(self._save_dir, self._config)
 
-        # setting params for data from dataset
-        self.set_data_params()
+        # Replica Dataset initialization
+        self._dataset = ReplicaDataset(self._office_name, self._config)
+        print(self._dataset)
 
-        # preparing data from dataset
-        self.prepare_data()
+        # Dataset parameters
 
-        # create nerf model, initialize optimizer
-        self.create_nerf()
+        # Image heigth and width
+        self._img_h = self._config_parser.get_param(("experiment", "image_height"), int)
+        self._img_w = self._config_parser.get_param(("experiment", "image_width"), int)
 
-        # create rays in world coordinates
-        self.init_rays()
+        # Number of pixels, aspect ratio and horizontal field of view
+        self._n_pix = self._img_h * self._img_w
+        self._aspect_ratio = self._img_w / self._img_h
+        self._hfov = 90
 
-    def set_data_params(self):
+        # Camera Matrix components
+        # The pin-hole camera has the same value for fx and fy
+        self._fx = self._img_w / 2.0 / math.tan(math.radians(self._hfov / 2.0))
+        self._fy = self._fx
+        self._cx = (self._img_w - 1.0) / 2.0
+        self._cy = (self._img_h - 1.0) / 2.0
 
-        self.H = self._config["experiment"]["image_height"]
-        self.W = self._config["experiment"]["image_width"]
+        # Depth bounds
+        self._depth_close_bound, self._depth_far_bound = self._config_parser.get_param(("rendering", "depth_range"),
+                                                                                       list)
 
-        self.n_pix = self.H * self.W
-        self.aspect_ratio = self.W / self.H
+        # Scaled images for test and visualisation (scaling usually ends up the same)
+        # It influences the new camera matrix for test/visualisation purposes
+        self._test_viz_factor = self._config_parser.get_param(("rendering", "test_viz_factor"), int)
+        self._img_h_scaled = self._img_h // self._test_viz_factor
+        self._img_w_scaled = self._img_w // self._test_viz_factor
 
-        self.hfov = 90
-
-        # the pin-hole camera has the same value for fx and fy
-        self.fx = self.W / 2.0 / math.tan(math.radians(self.hfov / 2.0))
-        self.fy = self.fx
-
-        self.cx = (self.W - 1.0) / 2.0
-        self.cy = (self.H - 1.0) / 2.0
-
-        self.depth_close_bound, self.depth_far_bound = self._config["render"]["depth_range"]
-        self.c2w_staticcam = None
-
-        # use scaled size for test and visualisation purpose
-        self.test_viz_factor = int(self._config["render"]["test_viz_factor"])
-        self.H_scaled = self.H // self.test_viz_factor
-        self.W_scaled = self.W // self.test_viz_factor
-
-        self.fx_scaled = self.W_scaled / 2.0 / math.tan(math.radians(self.hfov / 2.0))
-        self.fy_scaled = self.fx_scaled
-
-        self.cx_scaled = (self.W_scaled - 1.0) / 2.0
-        self.cy_scaled = (self.H_scaled - 1.0) / 2.0
+        self._fx_scaled = self._img_w_scaled / 2.0 / math.tan(math.radians(self._hfov / 2.0))
+        self._fy_scaled = self._fx_scaled
+        self._cx_scaled = (self._img_w_scaled - 1.0) / 2.0
+        self._cy_scaled = (self._img_h_scaled - 1.0) / 2.0
 
     def prepare_data(self):
 
-        # shift numpy data to torch
-        train_samples = self._dataset.train_samples
-        test_samples = self._dataset.test_samples
+        ############################# Training Data #############################
 
-        self.train_ids = self._dataset._train_ids
-        self.test_ids = self._dataset.test_ids
+        # RGB images
+        # regular rgb training images - (N, H, W, C); C = 3
+        self._train_rgbs = torch.from_numpy(self._dataset.train_dataset["rgb"])
 
-        self.num_train = self._dataset.train_num
-        self.num_test = self._dataset.test_num
+        # scaled rgb training images -> (N, H, W, C) -> (N, C, H, W) -> bilinear transformation -> (N, H, W, C)
+        self._train_rgbs_scaled = F.interpolate(self._train_rgbs.permute(0, 3, 1, 2),
+                                                scale_factor=1 / self._test_viz_factor, mode="bilinear").permute(0, 2,
+                                                                                                                 3, 1)
 
-        ##### Train Data #####
+        # Depth maps
+        # regular depth training maps - (N, H, W)
+        self._train_depths = torch.from_numpy(self._dataset.train_dataset["depth"])
 
-        # RGB
-        self.train_image = torch.from_numpy(train_samples["image"])
-        self.train_image_scaled = F.interpolate(self.train_image.permute(0, 3, 1, 2, ),
-                                                scale_factor=1 / self._config["render"]["test_viz_factor"],
-                                                mode='bilinear').permute(0, 2, 3, 1)
-        # Depth
-        self.train_depth = torch.from_numpy(train_samples["depth"])
-        self.viz_train_depth = np.stack(
-            [depth2rgb(dep, min_value=self.depth_close_bound, max_value=self.depth_far_bound) for dep in
-             train_samples["depth"]], axis=0)  # [num_test, H, W, 3]
-        # process the depth for evaluation purpose
-        self.train_depth_scaled = F.interpolate(torch.unsqueeze(self.train_depth, dim=1).float(),
-                                                scale_factor=1 / self._config["render"]["test_viz_factor"],
-                                                mode='bilinear').squeeze(1).cpu().numpy()
-        # pose 
-        self.train_pose = torch.from_numpy(train_samples["pose"]).float()
+        # converting depth maps into rgb images using depth bounds - (N, H, W, C); C = 3
+        self._viz_train_depths = np.stack([depth2rgb(dep, min_value=self._depth_close_bound,
+                                                     max_value=self._depth_far_bound) for dep in
+                                           self._dataset.train_dataset["depth"]], axis=0)
 
-        ##### Test Data #####
+        # (N, H, W) -> unsqueeze(dim = 1) -> C = 1 -> (N, 1, H, W) -> bilinear -> squeeze(1) -> (N, H, W)
+        self._train_depths_scaled = F.interpolate(torch.unsqueeze(self._train_depths, dim=1).float(),
+                                                  scale_factor=1 / self._test_viz_factor,
+                                                  mode="bilinear").squeeze(1).cpu().numpy()
+        # training camera poses (N, 4, 4)
+        self._train_camera_poses = torch.from_numpy(self._dataset.train_dataset["camera_pose"]).float()
 
-        # RGB
-        self.test_image = torch.from_numpy(test_samples["image"])  # [num_test, H, W, 3]
-        # scale the test image for evaluation purpose
-        self.test_image_scaled = F.interpolate(self.test_image.permute(0, 3, 1, 2, ),
-                                               scale_factor=1 / self._config["render"]["test_viz_factor"],
-                                               mode='bilinear').permute(0, 2, 3, 1)
-        # Depth
-        self.test_depth = torch.from_numpy(test_samples["depth"])  # [num_test, H, W]
-        self.viz_test_depth = np.stack(
-            [depth2rgb(dep, min_value=self.depth_close_bound, max_value=self.depth_far_bound) for dep in
-             test_samples["depth"]], axis=0)  # [num_test, H, W, 3]
-        # process the depth for evaluation purpose
-        self.test_depth_scaled = F.interpolate(torch.unsqueeze(self.test_depth, dim=1).float(),
-                                               scale_factor=1 / self._config["render"]["test_viz_factor"],
-                                               mode='bilinear').squeeze(1).cpu().numpy()
-        # pose 
-        self.test_pose = torch.from_numpy(test_samples["pose"]).float()  # [num_test, 4, 4]
+        ############################# Test Data #############################
 
-        self.train_image = self.train_image.cuda()
-        self.train_image_scaled = self.train_image_scaled.cuda()
-        self.train_depth = self.train_depth.cuda()
+        # RGB images
+        # regular rgb test images - (N, H, W, C); C = 3
+        self._test_rgbs = torch.from_numpy(self._dataset.test_dataset["rgb"])
 
-        self.test_image = self.test_image.cuda()
-        self.test_image_scaled = self.test_image_scaled.cuda()
-        self.test_depth = self.test_depth.cuda()
+        # scaled rgb test images -> (N, H, W, C) -> (N, C, H, W) -> bilinear transformation -> (N, H, W, C)
+        self._test_rgbs_scaled = F.interpolate(self._test_rgbs.permute(0, 3, 1, 2),
+                                               scale_factor=1 / self._test_viz_factor, mode="bilinear").permute(0, 2, 3,
+                                                                                                                1)
 
-        # set the data sampling paras which need the number of training images
-        if self.no_batching is False:  # False means we need to sample from all rays instead of rays from one random image
-            self.i_batch = 0
-            self.rand_idx = torch.randperm(self.num_train * self.H * self.W)
+        # Depth maps
+        # regular depth test maps - (N, H, W)
+        self._test_depths = torch.from_numpy(self._dataset.test_dataset["depth"])
 
-        # add datasets to tfboard for comparison to rendered images
-        self._tensorboard_visualizer._summary_writer.add_image('Train/rgb_ground_truth', train_samples["image"], 0,
-                                                               dataformats='NHWC')
+        # converting depth maps into rgb images using depth bounds - (N, H, W, C); C = 3
+        self._viz_test_depths = np.stack([depth2rgb(dep, min_value=self._depth_close_bound,
+                                                    max_value=self._depth_far_bound) for dep in
+                                          self._dataset.test_dataset["depth"]], axis=0)
 
-        self._tensorboard_visualizer._summary_writer.add_image('Test/rgb_ground_truth', test_samples["image"], 0,
-                                                               dataformats='NHWC')
+        # (N, H, W) -> unsqueeze(dim = 1) -> C = 1 -> (N, 1, H, W) -> bilinear -> squeeze(1) -> (N, H, W)
+        self._test_depths_scaled = F.interpolate(torch.unsqueeze(self._test_depths, dim=1).float(),
+                                                 scale_factor=1 / self._test_viz_factor,
+                                                 mode="bilinear").squeeze(1).cpu().numpy()
 
-    def init_rays(self):
+        # test camera poses (N, 4, 4)
+        self._test_camera_poses = torch.from_numpy(self._dataset.test_dataset["camera_pose"]).float()
+
+        # After creating all torch.Tensor(s) comes sending all data to the CUDA cores
+        self._train_rgbs = self._train_rgbs.cuda()
+        self._train_rgbs_scaled = self._train_rgbs_scaled.cuda()
+        self._train_depths = self._train_depths.cuda()
+
+        self._test_rgbs = self._test_rgbs.cuda()
+        self._test_rgbs_scaled = self._test_rgbs_scaled.cuda()
+        self._test_depths = self._test_depths.cuda()
+
+        # Adding all datasets to Tensorboard for comparison with rendered images
+        self._tensorboard_visualizer.summary_writer.add_image("Train/rgb_ground_truth",
+                                                              self._dataset.train_dataset["rgb"], 0,
+                                                              dataformats="NHWC")
+
+        self._tensorboard_visualizer.summary_writer.add_image("Test/rgb_ground_truth",
+                                                              self._dataset.test_dataset["rgb"], 0,
+                                                              dataformats="NHWC")
+
+    def initialize_models(self):
+
+        """
+        Creating coarse and fine NeRF models with previously "embedded" inputs.
+        """
+
+        embedding_3d_location = Embedding(num_freqs=self._num_freqs_3d, scalar_factor=10)
+        embed_fcn = embedding_3d_location.embed
+        input_ch = embedding_3d_location.output_dim
+
+        input_ch_views = 0
+        embed_dirs_fcn = None
+
+        if self._use_view_dirs:
+            embedding_2d_direction = Embedding(num_freqs=self._num_freqs_2d, scalar_factor=1)
+            embed_dirs_fcn = embedding_2d_direction.embed
+            input_ch_views = embedding_2d_direction.output_dim
+
+        # Creating NeRF model - coarse
+        model = NeRFModel(D=self._net_depth_coarse,
+                          W=self._net_width_coarse,
+                          input_ch=input_ch,
+                          output_ch=5,
+                          input_ch_views=input_ch_views,
+                          use_view_dirs=self._use_view_dirs).cuda()
+
+        learnable_params = list(model.parameters())
+
+        # Creating NeRF model - fine
+        model_fine = NeRFModel(D=self._net_depth_fine,
+                               W=self._net_width_fine,
+                               input_ch=input_ch,
+                               output_ch=5,
+                               input_ch_views=input_ch_views,
+                               use_view_dirs=self._use_view_dirs).cuda()
+
+        learnable_params += list(model_fine.parameters())
+
+        # Adam optimizer
+        optimizer = torch.optim.Adam(params=learnable_params, lr=self._learning_rate)
+
+        self._nerf_net_coarse = model
+        self._nerf_net_fine = model_fine
+        self._optimizer = optimizer
+
+        self._embed_fcn = embed_fcn
+        self._embed_dirs_fcn = embed_dirs_fcn
+
+    def initialize_rays(self):
 
         # create rays
-        rays = create_rays(self.num_train,
-                           self.train_pose,
-                           self.H,
-                           self.W,
-                           self.fx,
-                           self.fy,
-                           self.cx,
-                           self.cy,
-                           self.depth_close_bound,
-                           self.depth_far_bound,
-                           use_viewdirs=self.use_view_dirs,
-                           convention=self._convention)
+        rays_train = create_rays(self._dataset.train_dataset_len,
+                                 self._train_camera_poses,
+                                 self._img_h,
+                                 self._img_w,
+                                 self._fx,
+                                 self._fy,
+                                 self._cx,
+                                 self._cy,
+                                 self._depth_close_bound,
+                                 self._depth_far_bound,
+                                 use_viewdirs=self._use_view_dirs)
 
-        rays_vis = create_rays(self.num_train,
-                               self.train_pose,
-                               self.H_scaled,
-                               self.W_scaled,
-                               self.fx_scaled,
-                               self.fy_scaled,
-                               self.cx_scaled,
-                               self.cy_scaled,
-                               self.depth_close_bound,
-                               self.depth_far_bound,
-                               use_viewdirs=self.use_view_dirs,
-                               convention=self._convention)
+        rays_vis = create_rays(self._dataset.train_dataset_len,
+                               self._train_camera_poses,
+                               self._img_h_scaled,
+                               self._img_w_scaled,
+                               self._fx_scaled,
+                               self._fy_scaled,
+                               self._cx_scaled,
+                               self._cy_scaled,
+                               self._depth_close_bound,
+                               self._depth_far_bound,
+                               use_viewdirs=self._use_view_dirs)
 
-        rays_test = create_rays(self.num_test,
-                                self.test_pose,
-                                self.H_scaled,
-                                self.W_scaled,
-                                self.fx_scaled,
-                                self.fy_scaled,
-                                self.cx_scaled,
-                                self.cy_scaled,
-                                self.depth_close_bound,
-                                self.depth_far_bound,
-                                use_viewdirs=self.use_view_dirs,
-                                convention=self._convention)
+        rays_test = create_rays(self._dataset.test_dataset_len,
+                                self._test_camera_poses,
+                                self._img_h_scaled,
+                                self._img_w_scaled,
+                                self._fx_scaled,
+                                self._fy_scaled,
+                                self._cx_scaled,
+                                self._cy_scaled,
+                                self._depth_close_bound,
+                                self._depth_far_bound,
+                                use_viewdirs=self._use_view_dirs)
 
         # init rays
-        self.rays = rays.cuda()  # [num_images, H*W, 11]
+        self.rays_train = rays_train.cuda()  # [num_images, H*W, 11]
         self.rays_vis = rays_vis.cuda()
         self.rays_test = rays_test.cuda()
 
@@ -240,11 +284,11 @@ class NeRFTrainer:
         total_ray_num = num_img * h * w
 
         if mode == "train":
-            image = self.train_image
+            image = self._train_rgbs
             sample_num = self.num_train
 
         elif mode == "test":
-            image = self.test_image
+            image = self._test_rgbs
             sample_num = self.num_test
 
         # sample rays and ground truth data
@@ -279,7 +323,7 @@ class NeRFTrainer:
     def render_rays(self, flat_rays):
 
         """
-            Render rays, run in optimisation loop.
+            Render rays, run in optimization loop.
 
             Returns:
                 List of:
@@ -337,8 +381,8 @@ class NeRFTrainer:
                                                                            None]  # [N_rays, N_samples, 3]
 
         raw_noise_std = self.raw_noise_std if self._train_mode else 0
-        raw_coarse = run_network(pts_coarse_sampled, viewdirs, self.nerf_net_coarse,
-                                 self.embed_fn, self.embeddirs_fn, netchunk=self._net_chunk)
+        raw_coarse = run_network(pts_coarse_sampled, viewdirs, self._nerf_net_coarse,
+                                 self._embed_fcn, self._embed_dirs_fcn, netchunk=self._net_chunk)
 
         rgb_coarse, disp_coarse, acc_coarse, weights_coarse, depth_coarse, feat_map_coarse = raw2outputs(raw_coarse,
                                                                                                          z_vals, rays_d,
@@ -358,8 +402,8 @@ class NeRFTrainer:
             pts_fine_sampled = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :,
                                                                              None]  # [N_rays, N_samples + N_importance, 3]
 
-            raw_fine = run_network(pts_fine_sampled, viewdirs, lambda x: self.nerf_net_fine(x, self._endpoint_feat),
-                                   self.embed_fn, self.embeddirs_fn, netchunk=self._net_chunk)
+            raw_fine = run_network(pts_fine_sampled, viewdirs, lambda x: self._nerf_net_fine(x, self._endpoint_feat),
+                                   self._embed_fcn, self._embed_dirs_fcn, netchunk=self._net_chunk)
 
             rgb_fine, disp_fine, acc_fine, weights_fine, depth_fine, feat_map_fine = raw2outputs(raw_fine, z_vals,
                                                                                                  rays_d, raw_noise_std,
@@ -390,52 +434,6 @@ class NeRFTrainer:
 
         return ret
 
-    def create_nerf(self):
-
-        """ 
-            Instantiate NeRF's MLP model 
-        """
-
-        embed_fn, input_ch = get_embedder(self._config["render"]["multires"], self._config["render"]["i_embed"],
-                                          scalar_factor=10)
-
-        input_ch_views = 0
-        embeddirs_fn = None
-        if self._config["render"]["use_viewdirs"]:
-            embeddirs_fn, input_ch_views = get_embedder(self._config["render"]["multires_views"],
-                                                        self._config["render"]["i_embed"], scalar_factor=1)
-
-        # creating NeRF model - coarse
-        model = NeRF(D=self._config["model"]["netdepth"],
-                     W=self._config["model"]["netwidth"],
-                     input_ch=input_ch,
-                     output_ch=5,
-                     skips=[4],
-                     input_ch_views=input_ch_views,
-                     use_viewdirs=self._config["render"]["use_viewdirs"]).cuda()
-
-        grad_vars = list(model.parameters())
-
-        # creating NeRF model - fine
-        model_fine = NeRF(D=self._config["model"]["netdepth_fine"],
-                          W=self._config["model"]["netwidth_fine"],
-                          input_ch=input_ch,
-                          output_ch=5,
-                          skips=[4],
-                          input_ch_views=input_ch_views,
-                          use_viewdirs=self._config["render"]["use_viewdirs"]).cuda()
-
-        grad_vars += list(model_fine.parameters())
-
-        # create optimizer
-        optimizer = torch.optim.Adam(params=grad_vars, lr=self.lrate)
-
-        self.nerf_net_coarse = model
-        self.nerf_net_fine = model_fine
-        self.embed_fn = embed_fn
-        self.embeddirs_fn = embeddirs_fn
-        self.optimizer = optimizer
-
     def step(self, global_step):
 
         """
@@ -443,7 +441,8 @@ class NeRFTrainer:
         """
 
         # sample rays to query and optimise
-        sampled_rays, sampled_gt_rgb = self.sample_data(global_step, self.rays, self.H, self.W, no_batching=True,
+        sampled_rays, sampled_gt_rgb = self.sample_data(global_step, self.rays_train, self._img_h, self._img_w,
+                                                        no_batching=True,
                                                         mode="train")
 
         output_dict = self.render_rays(sampled_rays)
@@ -453,7 +452,7 @@ class NeRFTrainer:
 
         # calculation of loss and gradients for coarse and fine networks 
 
-        self.optimizer.zero_grad()
+        self._optimizer.zero_grad()
 
         img_loss_coarse = img2mse(rgb_coarse, sampled_gt_rgb)
 
@@ -468,12 +467,12 @@ class NeRFTrainer:
         total_loss = img_loss_coarse + img_loss_fine
 
         total_loss.backward()
-        self.optimizer.step()
+        self._optimizer.step()
 
         # updating learning rate
         new_lrate = self.lrate * (self.lrate_decay_rate ** (global_step / self.lrate_decay_steps))
 
-        for param_group in self.optimizer.param_groups:
+        for param_group in self._optimizer.param_groups:
             param_group['lr'] = new_lrate
 
         # Visualization
@@ -503,17 +502,17 @@ class NeRFTrainer:
             ckpt_file = os.path.join(ckpt_dir, '{:06d}.ckpt'.format(global_step))
 
             torch.save({'global_step': global_step,
-                        'network_coarse_state_dict': self.nerf_net_coarse.state_dict(),
-                        'network_fine_state_dict': self.nerf_net_fine.state_dict(),
-                        'optimizer_state_dict': self.optimizer.state_dict(), }, ckpt_file)
+                        'network_coarse_state_dict': self._nerf_net_coarse.state_dict(),
+                        'network_fine_state_dict': self._nerf_net_fine.state_dict(),
+                        'optimizer_state_dict': self._optimizer.state_dict(), }, ckpt_file)
 
             print(f"Saved checkpoints at {ckpt_file}")
 
         # Rendering training images
         if global_step % self._config["logging"]["step_render_train"] == 0 and global_step > 0:
             self._train_mode = False
-            self.nerf_net_coarse.eval()
-            self.nerf_net_fine.eval()
+            self._nerf_net_coarse.eval()
+            self._nerf_net_fine.eval()
 
             train_save_dir = os.path.join(self._config["experiment"]["save_dir"], "train_render",
                                           'step_{:06d}'.format(global_step))
@@ -525,8 +524,8 @@ class NeRFTrainer:
             print('Saved rendered images from training set')
 
             self._train_mode = True
-            self.nerf_net_coarse.train()
-            self.nerf_net_fine.train()
+            self._nerf_net_coarse.train()
+            self._nerf_net_fine.train()
 
             with torch.no_grad():
                 batch_train_img_mse = img2mse(torch.from_numpy(rgbs), self.train_image_scaled.cpu())
@@ -538,13 +537,13 @@ class NeRFTrainer:
             imageio.mimwrite(os.path.join(train_save_dir, 'rgb.mp4'), to8b_np(rgbs), fps=30, quality=8)
 
             # add rendered image into tf-board
-            self._tensorboard_visualizer._summary_writer.add_image('Train/rgb', rgbs, global_step, dataformats='NHWC')
+            self._tensorboard_visualizer.summary_writer.add_image('Train/rgb', rgbs, global_step, dataformats='NHWC')
 
         # Rendering test images
         if global_step % self._config["logging"]["step_render_test"] == 0 and global_step > 0:
             self._train_mode = False
-            self.nerf_net_coarse.eval()
-            self.nerf_net_fine.eval()
+            self._nerf_net_coarse.eval()
+            self._nerf_net_fine.eval()
 
             test_save_dir = os.path.join(self._config["experiment"]["save_dir"], "test_render",
                                          'step_{:06d}'.format(global_step))
@@ -556,8 +555,8 @@ class NeRFTrainer:
             print('Saved rendered images from test set')
 
             self._train_mode = True
-            self.nerf_net_coarse.train()
-            self.nerf_net_fine.train()
+            self._nerf_net_coarse.train()
+            self._nerf_net_fine.train()
 
             with torch.no_grad():
                 batch_test_img_mse = img2mse(torch.from_numpy(rgbs), self.test_image_scaled.cpu())
@@ -568,7 +567,7 @@ class NeRFTrainer:
             imageio.mimwrite(os.path.join(test_save_dir, 'rgb.mp4'), to8b_np(rgbs), fps=30, quality=8)
 
             # add rendered image into tensor board
-            self._tensorboard_visualizer._summary_writer.add_image('Test/rgb', rgbs, global_step, dataformats='NHWC')
+            self._tensorboard_visualizer.summary_writer.add_image('Test/rgb', rgbs, global_step, dataformats='NHWC')
 
         # Printing progress
         if global_step % self._config["logging"]["step_log_print"] == 0:
@@ -589,7 +588,7 @@ class NeRFTrainer:
 
             rgb = output_dict["rgb_fine"]
 
-            rgb = rgb.cpu().numpy().reshape((self.H_scaled, self.W_scaled, 3))
+            rgb = rgb.cpu().numpy().reshape((self._img_h_scaled, self._img_w_scaled, 3))
 
             rgbs.append(rgb)
 
@@ -616,12 +615,12 @@ class NeRFTrainer:
             self._train_mode = False
 
             checkpoint = torch.load(ckpt_path)
-            self.nerf_net_coarse.load_state_dict(checkpoint['network_coarse_state_dict'])
-            self.nerf_net_fine.load_state_dict(checkpoint['network_fine_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self._nerf_net_coarse.load_state_dict(checkpoint['network_coarse_state_dict'])
+            self._nerf_net_fine.load_state_dict(checkpoint['network_fine_state_dict'])
+            self._optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-            self.nerf_net_coarse.eval()
-            self.nerf_net_fine.eval()
+            self._nerf_net_coarse.eval()
+            self._nerf_net_fine.eval()
 
         elif not os.path.exists(ckpt_path) and not use_current_models:
             print("Specified checkpoint doesn't exist!")
@@ -631,8 +630,8 @@ class NeRFTrainer:
 
             self._train_mode = False
 
-            self.nerf_net_coarse.eval()
-            self.nerf_net_fine.eval()
+            self._nerf_net_coarse.eval()
+            self._nerf_net_fine.eval()
 
         video_save_dir = os.path.join(self._config["experiment"]["save_dir"], "videos")
 
@@ -645,14 +644,14 @@ class NeRFTrainer:
 
             rays = create_rays(poses.shape[0],
                                poses,
-                               self.H_scaled,
-                               self.W_scaled,
-                               self.fx_scaled,
-                               self.fy_scaled,
-                               self.cx_scaled,
-                               self.cy_scaled,
-                               self.depth_close_bound,
-                               self.depth_far_bound,
+                               self._img_h_scaled,
+                               self._img_w_scaled,
+                               self._fx_scaled,
+                               self._fy_scaled,
+                               self._cx_scaled,
+                               self._cy_scaled,
+                               self._depth_close_bound,
+                               self._depth_far_bound,
                                use_viewdirs=self.use_view_dirs,
                                convention=self._convention)
 
@@ -661,5 +660,5 @@ class NeRFTrainer:
             imageio.mimwrite(os.path.join(video_save_dir, video_name), to8b_np(rgbs), fps=30, quality=8)
 
             self._train_mode = True
-            self.nerf_net_coarse.train()
-            self.nerf_net_fine.train()
+            self._nerf_net_coarse.train()
+            self._nerf_net_fine.train()

@@ -71,21 +71,25 @@ class ReplicaDataset(Dataset):
     def test_dataset(self) -> Dict[str, Union[List, np.ndarray]]:
         return self._test_dataset
 
+    @property
+    def train_dataset_len(self) -> int:
+        return self._train_dataset["rgb"].shape[0] if \
+            isinstance(self._train_dataset["rgb"], np.ndarray) else len(self._train_dataset["rgb"])
+
+    @property
+    def test_dataset_len(self) -> int:
+        return self._test_dataset["rgb"].shape[0] if \
+            isinstance(self._test_dataset["rgb"], np.ndarray) else len(self._test_dataset["rgb"])
+
     def __str__(self) -> str:
 
-        train_dataset_len = self._train_dataset['rgb'].shape[0] if \
-            isinstance(self._train_dataset['rgb'], np.ndarray) else len(self._train_dataset['rgb'])
-
-        train_dataset_string = f"Dataset length: {train_dataset_len}\n"
+        train_dataset_string = f"Dataset length: {self.train_dataset_len}\n"
 
         for key in self._train_dataset.keys():
             train_dataset_string += f"{key} has shape of {self._train_dataset[key].shape}, " \
                                     f"type {self._train_dataset[key].dtype}\n"
 
-        test_dataset_len = self._test_dataset['rgb'].shape[0] if \
-            isinstance(self._test_dataset['rgb'], np.ndarray) else len(self._test_dataset['rgb'])
-
-        test_dataset_string = f"Dataset length: {test_dataset_len}\n"
+        test_dataset_string = f"Dataset length: {self.test_dataset_len}\n"
 
         for key in self._test_dataset.keys():
             test_dataset_string += f"{key} has shape of {self._test_dataset[key].shape}, " \

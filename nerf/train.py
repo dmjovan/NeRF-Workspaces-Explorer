@@ -4,7 +4,7 @@ import time
 
 import yaml
 
-from nerf.training.trainer import NeRFTrainer
+from nerf.training.nerf_replica_trainer import NeRFReplicaTrainer
 
 AVAILABLE_OFFICES = ("tokyo", "new_york", "geneve", "belgrade")
 
@@ -26,8 +26,17 @@ if __name__ == "__main__":
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
-    # Creating trainer for NeRF algorithm
-    nerf_trainer = NeRFTrainer(f"office_{office_name}", config)
+    # Creating trainer for NeRF algorithm for Replica dataset
+    nerf_trainer = NeRFReplicaTrainer(f"office_{office_name}", config)
+
+    # Preparing the data from datasets
+    nerf_trainer.prepare_data()
+
+    # Creating and initializing the NeRF models
+    nerf_trainer.initialize_models()
+
+    # Initializing rays for training, testing and visualization for NeRF models (in world coordinates)
+    nerf_trainer.initialize_rays()
 
     # Gathering number of training iterations
     num_iteration = int(config["training"]["n_iterations"])

@@ -21,18 +21,18 @@ class TensorboardWriter:
             os.makedirs(self._log_dir)
 
         # Creating SummaryWriter object
-        self._summary_writer = SummaryWriter(log_dir=self._log_dir)
+        self.summary_writer = SummaryWriter(log_dir=self._log_dir)
 
         # Getting logging interval
         self._config_parser = ConfigParser(config)
-        self._log_interval = self._config_parser.get_param(("logging", "step_log_tensorboard"), int)
+        self.log_interval = self._config_parser.get_param(("logging", "step_log_tensorboard"), int)
 
         # Adding experiment arguments into Tensorboard
-        self._summary_writer.add_text("Experiment arguments", str(yaml.dump(config, sort_keys=False, indent=4)), 0)
+        self.summary_writer.add_text("Experiment arguments", str(yaml.dump(config, sort_keys=False, indent=4)), 0)
 
     def visualize_scalars(self, i_iter, losses, names):
         for i, loss in enumerate(losses):
-            self._summary_writer.add_scalar(names[i], loss, i_iter)
+            self.summary_writer.add_scalar(names[i], loss, i_iter)
 
     def visualize_histogram(self, i_iter, value, names):
-        self._summary_writer.add_histogram(tag=names, values=value, global_step=i_iter)
+        self.summary_writer.add_histogram(tag=names, values=value, global_step=i_iter)
