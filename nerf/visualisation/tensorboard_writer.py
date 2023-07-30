@@ -16,9 +16,7 @@ class TensorboardWriter:
 
         # Setting the logging path
         self._log_dir = os.path.join(experiment_dir, "tensorboard_logs")
-
-        if not os.path.exists(self._log_dir):
-            os.makedirs(self._log_dir)
+        os.makedirs(self._log_dir, exist_ok=True)
 
         # Creating SummaryWriter object
         self.summary_writer = SummaryWriter(log_dir=self._log_dir)
@@ -30,9 +28,9 @@ class TensorboardWriter:
         # Adding experiment arguments into Tensorboard
         self.summary_writer.add_text("Experiment arguments", str(yaml.dump(config, sort_keys=False, indent=4)), 0)
 
-    def visualize_scalars(self, i_iter, losses, names):
+    def write_scalars(self, i_iter: int, losses, names):
         for i, loss in enumerate(losses):
             self.summary_writer.add_scalar(names[i], loss, i_iter)
 
-    def visualize_histogram(self, i_iter, value, names):
+    def write_histogram(self, i_iter: int, value, names):
         self.summary_writer.add_histogram(tag=names, values=value, global_step=i_iter)

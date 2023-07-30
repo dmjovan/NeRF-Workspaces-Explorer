@@ -4,7 +4,7 @@ import time
 
 import yaml
 
-from nerf.training.nerf_replica_trainer import NeRFReplicaTrainer
+from nerf.training.nerf_replica_training_handler import NeRFReplicaTrainingHandler
 
 AVAILABLE_OFFICES = ("tokyo", "new_york", "geneve", "belgrade")
 
@@ -27,7 +27,7 @@ if __name__ == "__main__":
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
     # Creating trainer for NeRF algorithm for Replica dataset
-    nerf_trainer = NeRFReplicaTrainer(f"office_{office_name}", config)
+    nerf_trainer = NeRFReplicaTrainingHandler(f"office_{office_name}", config)
 
     # Preparing the data from datasets
     nerf_trainer.prepare_data()
@@ -53,4 +53,4 @@ if __name__ == "__main__":
 
         step_end_time = time.time()
         step_duration = step_end_time - step_start_time
-        print(f"Finished step: {i+1}/{num_iteration} --> Step duration: {step_duration} sec")
+        print(f"Finished step: {i + 1}/{num_iteration} --> Step duration: {step_duration} sec")

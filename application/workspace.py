@@ -3,17 +3,7 @@ from collections import namedtuple
 
 import numpy as np
 
-HW = namedtuple("HW", ["h", "w"])
-HW.__new__.__defaults__ = (0, 0)
-HW.__str__ = lambda d: f"h = {d.h}, w = {d.w}"
-HW.__ge__ = lambda self, other: (self.h >= other.h) and (self.w >= other.w)
-HW.__le__ = lambda self, other: (self.h <= other.h) and (self.w <= other.w)
-HW.__copy__ = lambda self: HW(self.h, self.w)
-
-XYZ = namedtuple("XYZ", ["x", "y", "z"])
-XYZ.__new__.__defaults__ = (0.0, 0.0, 0.0)
-XYZ.__str__ = lambda c: f"x = {c.x}, y = {c.y}, z = {c.z}"
-XYZ.__copy__ = lambda self: XYZ(self.x, self.y, self.z)
+from utils.data_descriptors import HW, XYZ
 
 
 class Workspace(metaclass=ABCMeta):

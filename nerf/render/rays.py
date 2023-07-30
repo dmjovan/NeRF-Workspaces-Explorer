@@ -1,13 +1,46 @@
+from typing import Tuple
+
 import torch
-import numpy as np
 
 
-# Ray helpers
-def get_rays_camera(B, H, W, fx, fy, cx, cy):
+def create_rays(num_images: int, Ts_c2w: torch.Tensor, height: int, width: int, fx: float, fy: float, cx: float,
+                cy: float, near: float, far: float, use_view_dirs: bool = True):
+    """
+    Convention details: "opencv" or "opengl".
+    It defines the coordinates convention of rays from cameras.
+    OpenCV defines x,y,z as right, down, forward while OpenGL defines x,y,z as right, up, backward
+    (camera looking towards forward direction still, -z!).
 
-    i, j = torch.meshgrid(torch.arange(W),
-                          torch.arange(H))  # pytorch's meshgrid has indexing='ij', we transpose to "xy" moode
+    Note: Use either convention is fine, but the corresponding pose should follow the same convention.
+    """
 
+    print("Preparing rays")
+
+    rays_cam = _get_rays_camera(num_images, height, width, fx, fy, cx, cy)  # [N, H, W, 3]
+
+    dirs_C = rays_cam.view(num_images, -1, 3)  # [N, HW, 3]
+    rays_o, rays_d = _get_rays_world(Ts_c2w, dirs_C)  # origins: [B, HW, 3], dirs_W: [B, HW, 3]
+
+    if use_view_dirs:
+        # Providing ray directions as input
+        view_dirs = rays_d / torch.norm(rays_d, dim=-1, keepdim=True).float()
+
+    near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
+    rays = torch.cat([rays_o, rays_d, near, far], -1)
+
+    if use_view_dirs:
+        rays = torch.cat([rays, view_dirs], -1)
+
+    return rays
+
+
+def _get_rays_camera(B: int, H: int, W: int, fx: float, fy: float, cx: float, cy: float) -> torch.Tensor:
+    """
+    Getting rays from camera perspective
+    """
+
+    # Pytorch's meshgrid has indexing "ij", by transposing it we get "xy"
+    i, j = torch.meshgrid(torch.arange(W), torch.arange(H))
     i = i.t().float()
     j = j.t().float()
 
@@ -22,29 +55,28 @@ def get_rays_camera(B, H, W, fx, fy, cx, cy):
     y = (j_batch - cy) / fy
     z = torch.ones(size)
 
-    dirs = torch.stack((x, y, z), dim=3)  # shape of [B, H, W, 3]
-
+    dirs = torch.stack((x, y, z), dim=3)  # shape of [B, H, W, 3], 3 comes from x, y, z not channels,
+    # channels contain redundant info for spa
     return dirs
 
 
-def get_rays_world(T_WC, dirs_C):
+def _get_rays_world(T_WC: torch.Tensor, dirs_C: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Getting rays in world coordinates
+    """
+
     R_WC = T_WC[:, :3, :3]  # Bx3x3
     dirs_W = torch.matmul(R_WC[:, None, ...], dirs_C[..., None]).squeeze(-1)
     origins = T_WC[:, :3, -1]  # Bx3
     origins = torch.broadcast_tensors(origins[:, None, :], dirs_W)[0]
+
     return origins, dirs_W
 
 
-def sampling_index(n_rays, batch_size, h, w):
-    index_b = np.random.choice(np.arange(batch_size)).reshape((1, 1))  # sample one image from the full training set
-    index_hw = torch.randint(0, h * w, (1, n_rays))
-
-    return index_b, index_hw
-
-
-# Hierarchical sampling using inverse CDF transformations
 def sample_pdf(bins, weights, N_samples, det=False):
-    """ Sample @N_importance samples from @bins with distribution defined by @weights.
+    """
+    Hierarchical sampling using inverse CDF transformations.
+    Sample @N_importance samples from @bins with distribution defined by @weights.
 
     Inputs:
         bins: N_rays x (N_samples_coarse - 1)
@@ -52,6 +84,7 @@ def sample_pdf(bins, weights, N_samples, det=False):
         N_samples: N_samples_fine
         det: deterministic or not
     """
+
     # Get pdf
     weights = weights + 1e-5  # prevent nans, prevent division by zero (don't do inplace op!)
     pdf = weights / torch.sum(weights, -1, keepdim=True)
@@ -88,32 +121,3 @@ def sample_pdf(bins, weights, N_samples, det=False):
     samples = bins_g[..., 0] + t * (bins_g[..., 1] - bins_g[..., 0])
 
     return samples
-
-
-def create_rays(num_rays, Ts_c2w, height, width, fx, fy, cx, cy, near, far, use_viewdirs=True):
-    """
-    Convention details: "opencv" or "opengl".
-    It defines the coordinates convention of rays from cameras.
-    OpenCV defines x,y,z as right, down, forward while OpenGL defines x,y,z as right, up, backward
-    (camera looking towards forward direction still, -z!).
-
-    Note: Use either convention is fine, but the corresponding pose should follow the same convention.
-    """
-
-    print("Preparing rays")
-
-    rays_cam = get_rays_camera(num_rays, height, width, fx, fy, cx, cy)  # [N, H, W, 3]
-
-    dirs_C = rays_cam.view(num_rays, -1, 3)  # [N, HW, 3]
-    rays_o, rays_d = get_rays_world(Ts_c2w, dirs_C)  # origins: [B, HW, 3], dirs_W: [B, HW, 3]
-
-    if use_viewdirs:
-        # provide ray directions as input
-        view_dirs = rays_d / torch.norm(rays_d, dim=-1, keepdim=True).float()
-
-    near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
-    rays = torch.cat([rays_o, rays_d, near, far], -1)
-
-    if use_viewdirs:
-        rays = torch.cat([rays, view_dirs], -1)
-    return rays
