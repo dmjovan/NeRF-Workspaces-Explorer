@@ -1,20 +1,22 @@
 import math
 import os
-import time
 from typing import Dict, Tuple
 
 import imageio
+import numpy as np
+import torch
+import torch.nn.functional as F
 from imgviz import depth2rgb
 from tqdm import tqdm
 
 from nerf.configs.config_parser import ConfigParser
 from nerf.datasets.replica_dataset import ReplicaDataset
 from nerf.models.embedding import Embedding
-from nerf.models.model_utils import *
+from nerf.models.model_utils import run_network, raw2outputs, img2mse, mse2psnr, to8b_np
 from nerf.models.nerf_model import NeRFModel
-from nerf.render.rays import sample_pdf, create_rays
-from nerf.training.training_utils import *
+from nerf.render.rays import create_rays, sample_pdf
 from nerf.visualisation.tensorboard_writer import TensorboardWriter
+from utils.batch_utils import batchify_rays
 
 EXPERIMENTS_DIR = os.path.join(os.path.dirname(__file__), "..", "experiments")
 
@@ -276,7 +278,7 @@ class NeRFReplicaTrainingHandler:
         sampled_rays, sampled_gt_rgb = self._sample_training_data()
 
         # Rendering rays using models
-        output_dict = self.render_rays(sampled_rays)
+        output_dict = self._render_rays(sampled_rays)
 
         rgb_coarse = output_dict["rgb_coarse"]  # N_rays x 3
         rgb_fine = output_dict["rgb_fine"]
@@ -321,11 +323,8 @@ class NeRFReplicaTrainingHandler:
 
         # Logging losses, metrics and histograms to Tensorboard
         if global_step % float(self._tensorboard_writer.log_interval) == 0:
-            self._log_to_tensorboard(global_step, output_dict, rgb_loss_coarse, rgb_loss_fine, total_loss)
-
-        # Saving models checkpoint
-        if global_step % float(self._step_save_ckpt) == 0:
-            self._save_models_checkpoint(global_step)
+            self._log_to_tensorboard(global_step, output_dict, rgb_loss_coarse, rgb_loss_fine,
+                                     total_loss, psnr_coarse, psnr_fine)
 
         # Rendering training images
         if global_step % self._step_render_train == 0 and global_step > 0:
@@ -334,6 +333,10 @@ class NeRFReplicaTrainingHandler:
         # Rendering test images
         if global_step % self._step_render_test == 0 and global_step > 0:
             self._render_test_images(global_step)
+
+        # Saving models checkpoint
+        if global_step % float(self._step_save_ckpt) == 0:
+            self._save_models_checkpoint(global_step)
 
     def _sample_training_data(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -345,9 +348,9 @@ class NeRFReplicaTrainingHandler:
             image_index = np.random.choice(np.arange(num_images)).reshape((1, 1))
 
             # Randomly sampling n_rays pixels from image (actually pixel indices)
-            hw_pixel_indices = torch.randint(0, h * w, (1, n_rays))
+            hw_pixel_inds = torch.randint(0, h * w, (1, n_rays))
 
-            return image_index, hw_pixel_indices
+            return image_index, hw_pixel_inds
 
         # generate sampling index
         num_img, num_ray, ray_dim = self.rays_train.shape
@@ -356,13 +359,13 @@ class NeRFReplicaTrainingHandler:
             raise RuntimeError("Bad configuration of training rays")
 
         # Sample random pixels from one random image from training dataset
-        image_index, hw_pixel_indices = sample_indices(self._n_rays, num_img, self._img_h, self._img_w)
+        image_idx, hw_pixel_indices = sample_indices(self._n_rays, num_img, self._img_h, self._img_w)
 
-        sampled_rays = self.rays_train[image_index, hw_pixel_indices, :]
+        sampled_rays = self.rays_train[image_idx, hw_pixel_indices, :]
         sampled_rays = sampled_rays.reshape([-1, ray_dim]).float()
 
         sampled_gt_rgbs = self._train_rgbs.reshape(self._dataset.train_dataset_len,
-                                                   -1, 3)[image_index, hw_pixel_indices, :].reshape(-1, 3)
+                                                   -1, 3)[image_idx, hw_pixel_indices, :].reshape(-1, 3)
 
         return sampled_rays, sampled_gt_rgbs
 
@@ -419,7 +422,7 @@ class NeRFReplicaTrainingHandler:
         self._nerf_net_fine.eval()
 
         with torch.no_grad():
-            rgbs = self.render_path(self.rays_vis, save_dir=train_save_dir)
+            rgbs = self._render_images_for_camera_path(self.rays_vis, save_dir=train_save_dir)
 
         print("Saved rendered images from training dataset")
 
@@ -455,7 +458,7 @@ class NeRFReplicaTrainingHandler:
         self._nerf_net_fine.eval()
 
         with torch.no_grad():
-            rgbs = self.render_path(self.rays_test, save_dir=test_save_dir)
+            rgbs = self._render_images_for_camera_path(self.rays_test, save_dir=test_save_dir)
 
         print("Saved rendered images from test dataset")
 
@@ -475,3 +478,141 @@ class NeRFReplicaTrainingHandler:
         self._train_mode = True
         self._nerf_net_coarse.train()
         self._nerf_net_fine.train()
+
+    def _render_images_for_camera_path(self, rays: torch.Tensor, save_dir: str) -> np.ndarray:
+        """
+        Rendering images for one "path" of camera. Path is already embedded into rays,
+        since they are created earlier before.
+        """
+
+        if not os.path.exists(save_dir):
+            raise RuntimeError(f"Cannot store rendered images. Path {save_dir} does not exist.")
+
+        rgb_images = []
+
+        for i, ray in enumerate(tqdm(rays)):
+            # Rendering rays
+            output_dict = self._render_rays(ray)
+
+            # Gathering output data
+            rgb = output_dict["rgb_fine"]
+            rgb = rgb.cpu().numpy().reshape((self._img_h_scaled, self._img_w_scaled, 3))  # H, W, C
+            rgb_images.append(rgb)
+
+            # Writing it into a file
+            imageio.imwrite(os.path.join(save_dir, f"rgb_{i:03d}.png"), to8b_np(rgb_images[-1]))
+
+        # Stacking images over batch dimension
+        rgb_images = np.stack(rgb_images, 0)
+
+        return rgb_images
+
+    def _render_rays(self, flat_rays: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Render rays, run in optimization loop.
+
+        Returns:
+            List of:
+                rgb_map: [batch_size, 3]. Predicted RGB values for rays.
+                disp_map: [batch_size]. Disparity map. Inverse of depth.
+                acc_map: [batch_size]. Accumulated opacity (alpha) along a ray.
+
+        Dict of extras: dict with everything returned by render_rays().
+        """
+
+        ray_shape = flat_rays.shape  # num_rays, 11
+
+        all_outputs = batchify_rays(self._volumetric_rendering, flat_rays.cuda(), self._chunk)
+
+        for key in all_outputs:
+            # each key should contain data with shape [num_rays, *data_shape]
+            key_shape = list(ray_shape[:-1]) + list(all_outputs[key].shape[1:])
+            all_outputs[key] = torch.reshape(all_outputs[key], key_shape)
+
+        return all_outputs
+
+    def _volumetric_rendering(self, ray_batch: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Volumetric rendering over batch of rays (chunk).
+        """
+
+        N_rays = ray_batch.shape[0]
+
+        rays_o, rays_d = ray_batch[:, 0:3], ray_batch[:, 3:6]  # [N_rays, 3] each
+        viewdirs = ray_batch[:, -3:] if ray_batch.shape[-1] > 8 else None
+
+        bounds = torch.reshape(ray_batch[..., 6:8], [-1, 1, 2])
+        near, far = bounds[..., 0], bounds[..., 1]  # [N_rays, 1], [N_rays, 1]
+
+        t_vals = torch.linspace(0., 1., steps=self._n_samples).cuda()
+
+        z_vals = near * (1. - t_vals) + far * (t_vals)  # use linear sampling in depth space
+
+        z_vals = z_vals.expand([N_rays, self._n_samples])
+
+        if self._perturb > 0. and self._train_mode:  # perturb sampling depths (z_vals)
+            if self._train_mode is True:  # only add perturbation during train_mode intead of testing
+                # get intervals between samples
+                mids = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
+                upper = torch.cat([mids, z_vals[..., -1:]], -1)
+                lower = torch.cat([z_vals[..., :1], mids], -1)
+                # stratified samples in those intervals
+                t_rand = torch.rand(z_vals.shape).cuda()
+
+                z_vals = lower + (upper - lower) * t_rand
+
+        pts_coarse_sampled = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :,
+                                                                           None]  # [N_rays, N_samples, 3]
+
+        raw_noise_std = self._raw_noise_std if self._train_mode else 0
+        raw_coarse = run_network(pts_coarse_sampled, viewdirs, self._nerf_net_coarse,
+                                 self._embed_fcn, self._embed_dirs_fcn, netchunk=self._net_chunk)
+
+        rgb_coarse, disp_coarse, acc_coarse, \
+            weights_coarse, depth_coarse, feat_map_coarse = raw2outputs(raw_coarse, z_vals, rays_d,
+                                                                        raw_noise_std, self._white_bkgd,
+                                                                        endpoint_feat=False)
+
+        if self._n_importance > 0:
+            z_vals_mid = .5 * (z_vals[..., 1:] + z_vals[..., :-1])  # (N_rays, N_samples-1) interval mid points
+            z_samples = sample_pdf(z_vals_mid, weights_coarse[..., 1:-1], self._n_importance,
+                                   det=(self._perturb == 0.) or (not self._train_mode))
+            z_samples = z_samples.detach()
+            # detach so that grad doesn't propogate to weights_coarse from here
+            # values are interleaved actually, so maybe can do better than sort?
+
+            z_vals, _ = torch.sort(torch.cat([z_vals, z_samples], -1), -1)
+
+            # [N_rays, N_samples + N_importance, 3]
+            pts_fine_sampled = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :, None]
+
+            raw_fine = run_network(pts_fine_sampled, viewdirs, lambda x: self._nerf_net_fine(x, self._endpoint_feat),
+                                   self._embed_fcn, self._embed_dirs_fcn, netchunk=self._net_chunk)
+
+            rgb_fine, disp_fine, acc_fine, \
+                weights_fine, depth_fine, feat_map_fine = raw2outputs(raw_fine, z_vals, rays_d,
+                                                                      raw_noise_std, self._white_bkgd,
+                                                                      endpoint_feat=self._endpoint_feat)
+
+        all_outputs = {}
+        all_outputs["rgb_coarse"] = rgb_coarse
+        all_outputs["disp_coarse"] = disp_coarse
+        all_outputs["acc_coarse"] = acc_coarse
+        all_outputs["depth_coarse"] = depth_coarse
+        all_outputs["raw_coarse"] = raw_coarse
+
+        all_outputs["rgb_fine"] = rgb_fine
+        all_outputs["disp_fine"] = disp_fine
+        all_outputs["acc_fine"] = acc_fine
+        all_outputs["depth_fine"] = depth_fine
+        all_outputs["z_std"] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
+        all_outputs["raw_fine"] = raw_fine  # model's raw, unprocessed predictions.
+
+        if self._endpoint_feat:
+            all_outputs["feat_map_fine"] = feat_map_fine
+
+        for key in all_outputs:
+            if (torch.isnan(all_outputs[key]).any() or torch.isinf(all_outputs[key]).any()):
+                print(f"[Numerical Error] {key} contains NaN or inf.")
+
+        return all_outputs

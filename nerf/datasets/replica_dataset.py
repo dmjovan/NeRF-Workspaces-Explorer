@@ -61,7 +61,7 @@ class ReplicaDataset(Dataset):
         self._test_dataset = {"rgb": [],
                               "depth": [],
                               "camera_pose": []}
-        self._populate_dataset_samples(DatasetType.TRAIN)
+        self._populate_dataset_samples(DatasetType.TEST)
 
     @property
     def train_dataset(self) -> Dict[str, Union[List, np.ndarray]]:
@@ -157,5 +157,5 @@ class ReplicaDataset(Dataset):
                 self._test_dataset["camera_pose"].append(camera_pose)
 
             # Transforming list of np.ndarrays to array with batch dimension
-            for key in self._train_dataset.keys():
-                self._train_dataset[key] = np.asarray(self._train_dataset[key])
+            for key in self._test_dataset.keys():
+                self._test_dataset[key] = np.asarray(self._test_dataset[key])

@@ -21,7 +21,7 @@ if __name__ == "__main__":
         raise RuntimeError(f"Office {office_name} not available for training.")
 
     # Reading YAML config file
-    with open(f"configs/office_{office_name}_config.yaml", "r") as f:
+    with open(f"nerf/configs/office_{office_name}_config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"

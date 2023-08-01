@@ -36,3 +36,7 @@ logging:
   step_save_ckpt: 20000 # frequency of storing checkpoints
   step_render_test: 5000 # frequency of rendering on unseen data
   step_render_train: 5000 # frequency of rendering on training data
+
+inference:
+  cuda_enabled: False
+

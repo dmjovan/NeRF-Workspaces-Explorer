@@ -13,7 +13,6 @@ class TensorboardWriter:
     """
 
     def __init__(self, experiment_dir: str, config: Dict) -> None:
-
         # Setting the logging path
         self._log_dir = os.path.join(experiment_dir, "tensorboard_logs")
         os.makedirs(self._log_dir, exist_ok=True)

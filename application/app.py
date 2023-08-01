@@ -1,10 +1,9 @@
 import os.path
-import sys
 from typing import Any
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QIcon, QImage
-from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QWidget, QVBoxLayout, QGridLayout, \
+from PyQt5.QtWidgets import QMainWindow, QLabel, QPushButton, QWidget, QVBoxLayout, QGridLayout, \
     QHBoxLayout
 
 from application.workspace import OfficeTokyoWorkspace, OfficeNewYorkWorkspace, OfficeGeneveWorkspace, \
@@ -138,7 +137,7 @@ class WorkspaceExplorer(QMainWindow):
         # Button for returning to the landing page
         return_landing_page_button = QPushButton("Explore another workspace", self)
         return_landing_page_button.clicked.connect(self._return_to_landing_page)
-        return_landing_page_button.setMaximumWidth(200)
+        return_landing_page_button.setMaximumWidth(300)
         return_landing_page_button.setMaximumHeight(50)
         return_landing_page_button.setStyleSheet(self._main_buttons_style_sheet)
         layout.addWidget(return_landing_page_button, alignment=Qt.AlignCenter | Qt.AlignTop)
@@ -444,10 +443,3 @@ class FloorPlanImageArea(QLabel):
                 self.left_click.emit(x_relative, y_relative)
 
         super().mousePressEvent(event)
-
-
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    landing_page = LandingPage()
-    landing_page.show()
-    sys.exit(app.exec_())

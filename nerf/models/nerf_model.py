@@ -6,10 +6,11 @@ import torch.nn.functional as F
 
 torch.autograd.set_detect_anomaly(True)
 
+
 class NeRFModel(nn.Module):
 
     def __init__(self, D: int = 8, W: int = 256, input_ch: int = 3, input_ch_views: int = 3, output_ch: int = 4,
-                 skips: Tuple[int, ...] = (4), use_view_dirs: bool = False):
+                 skips: Tuple[int, ...] = (4, ), use_view_dirs: bool = False):
         """
             D: number of layers for density (sigma) encoder
             W: number of hidden units in each layer
@@ -40,7 +41,6 @@ class NeRFModel(nn.Module):
             self._rgb_linear = nn.Linear(self._W // 2, 3)
         else:
             self._output_linear = nn.Linear(self._W, self._output_ch)
-            
 
     def forward(self, x, show_endpoint=False):
         """
@@ -68,7 +68,7 @@ class NeRFModel(nn.Module):
             for i, l in enumerate(self._views_linears):
                 h = self._views_linears[i](h)
                 h = F.relu(h)
-                
+
             if show_endpoint:
                 endpoint_feat = h
             rgb = self._rgb_linear(h)

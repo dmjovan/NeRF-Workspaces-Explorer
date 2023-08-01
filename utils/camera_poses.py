@@ -1,3 +1,5 @@
+from typing import List
+
 import numpy as np
 import torch
 
@@ -20,6 +22,10 @@ yaw_rotation = lambda th: np.array([[np.cos(th), 0, -np.sin(th), 0],
 
 
 def _get_camera_to_world_matrix(coordinates: COORD):
+    """
+    Converting camera poses into transformation matrix.
+    """
+
     c2w = trans_xyz(coordinates.x, coordinates.y, coordinates.z)
     c2w = pitch_rotation(coordinates.pitch / 180.0 * np.pi) @ c2w
     c2w = yaw_rotation(coordinates.yaw / 180.0 * np.pi) @ c2w
@@ -28,9 +34,16 @@ def _get_camera_to_world_matrix(coordinates: COORD):
     return c2w
 
 
-def get_camera_pose_from_coordinates(coordinates: COORD):
-    c2w = _get_camera_to_world_matrix(coordinates).reshape((4, 4))
+def get_camera_poses_from_list_of_coordinates(coordinates: List[COORD]):
+    """
+    Getting camera-to-world poses from list of coordinates.
+    """
 
-    Ts_c2w = np.asarray(c2w, dtype=np.float32).reshape((-1, 4, 4))
+    Ts_c2w = []
+    for coord in coordinates:
+        c2w = _get_camera_to_world_matrix(coord).reshape((4, 4))
+        Ts_c2w.append(c2w)
+
+    Ts_c2w = np.asarray(Ts_c2w, dtype=np.float32).reshape((-1, 4, 4))
 
     return torch.tensor(Ts_c2w).cpu()
