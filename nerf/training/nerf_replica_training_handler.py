@@ -14,7 +14,7 @@ from nerf.datasets.replica_dataset import ReplicaDataset
 from nerf.models.embedding import Embedding
 from nerf.models.model_utils import run_network, raw2outputs, img2mse, mse2psnr, to8b_np
 from nerf.models.nerf_model import NeRFModel
-from nerf.render.rays import create_rays, sample_pdf
+from nerf.rays.rays import create_rays, sample_pdf
 from nerf.visualisation.tensorboard_writer import TensorboardWriter
 from utils.batch_utils import batchify_rays
 

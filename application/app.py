@@ -113,6 +113,7 @@ class WorkspaceExplorer(QMainWindow):
 
         # Workspace instance
         self._workspace = WORKSPACES[workspace_index]
+        self._workspace.initialize_models()
 
         # Application window title
         self.setWindowTitle("Workspace Details")

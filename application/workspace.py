@@ -43,8 +43,10 @@ class Workspace(metaclass=ABCMeta):
     def _transform_relative_coordinates(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> COORD:
         pass
 
-    def render_image(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> np.ndarray:
+    def initialize_models(self):
+        self._nerf_inference.initialize_models()
 
+    def render_image(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> np.ndarray:
         coords: COORD = self._transform_relative_coordinates(rel_x, rel_y, yaw, pitch)
 
         image_array = self._nerf_inference.render_coordinates(coords)
@@ -95,7 +97,7 @@ class OfficeGeneveWorkspace(Workspace):
         super().__init__(name="Office Geneve",
                          folder_path="application/workspaces/office_geneve/",
                          floor_plan_scale=HW(600, 1000),
-                         model_path="")
+                         model_path="nerf/experiments/office_geneve/1/checkpoints/200000.ckpt")
 
         self._fixed_y = -0.5
 
@@ -109,7 +111,7 @@ class OfficeBelgradeWorkspace(Workspace):
         super().__init__(name="Office Belgrade",
                          folder_path="application/workspaces/office_belgrade/",
                          floor_plan_scale=HW(600, 750),
-                         model_path="")
+                         model_path="nerf/experiments/office_belgrade/1/checkpoints/200000.ckpt")
 
         self._fixed_y = -0.5
 
