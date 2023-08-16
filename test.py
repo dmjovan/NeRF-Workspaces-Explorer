@@ -1,5 +1,5 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 data = np.loadtxt(
     r"C:\Users\jdmitrovic\Desktop\NeRF-Workspaces-Explorer\Replica_Dataset\office_1\Sequence_1\traj_w_c.txt",
@@ -39,17 +39,17 @@ y_arr = np.array(y_arr)
 
 fig = plt.figure()
 plt.plot(z_arr, x_arr)
-plt.scatter(z_arr[0], x_arr[0], label = "0")
-plt.scatter(z_arr[105], x_arr[105], label = "105")
-plt.scatter(z_arr[236], x_arr[236], label = "236")
-plt.scatter(z_arr[370], x_arr[370], label = "370")
-plt.scatter(z_arr[417], x_arr[417], label = "417")
-plt.scatter(z_arr[481], x_arr[481], label = "481")
-plt.scatter(z_arr[550], x_arr[550], label = "550")
-plt.scatter(z_arr[690], x_arr[690], label = "690")
-plt.scatter(z_arr[779], x_arr[779], label = "779")
-plt.scatter(z_arr[840], x_arr[840], label = "840")
-plt.scatter(z_arr[899], x_arr[899], label = "899")
+plt.scatter(z_arr[0], x_arr[0], label="0")
+plt.scatter(z_arr[105], x_arr[105], label="105")
+plt.scatter(z_arr[236], x_arr[236], label="236")
+plt.scatter(z_arr[370], x_arr[370], label="370")
+plt.scatter(z_arr[417], x_arr[417], label="417")
+plt.scatter(z_arr[481], x_arr[481], label="481")
+plt.scatter(z_arr[550], x_arr[550], label="550")
+plt.scatter(z_arr[690], x_arr[690], label="690")
+plt.scatter(z_arr[779], x_arr[779], label="779")
+plt.scatter(z_arr[840], x_arr[840], label="840")
+plt.scatter(z_arr[899], x_arr[899], label="899")
 plt.xlabel("z")
 plt.ylabel("x")
 plt.legend()

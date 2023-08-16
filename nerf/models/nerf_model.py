@@ -10,7 +10,7 @@ torch.autograd.set_detect_anomaly(True)
 class NeRFModel(nn.Module):
 
     def __init__(self, D: int = 8, W: int = 256, input_ch: int = 3, input_ch_views: int = 3, output_ch: int = 4,
-                 skips: Tuple[int, ...] = (4, ), use_view_dirs: bool = False):
+                 skips: Tuple[int, ...] = (4,), use_view_dirs: bool = False):
         """
             D: number of layers for density (sigma) encoder
             W: number of hidden units in each layer

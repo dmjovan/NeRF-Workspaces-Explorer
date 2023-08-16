@@ -569,9 +569,9 @@ class NeRFReplicaTrainingHandler:
                                  self._embed_fcn, self._embed_dirs_fcn, netchunk=self._net_chunk)
 
         rgb_coarse, disp_coarse, acc_coarse, \
-            weights_coarse, depth_coarse, feat_map_coarse = raw2outputs(raw_coarse, z_vals, rays_d,
-                                                                        raw_noise_std, self._white_bkgd,
-                                                                        endpoint_feat=False)
+        weights_coarse, depth_coarse, feat_map_coarse = raw2outputs(raw_coarse, z_vals, rays_d,
+                                                                    raw_noise_std, self._white_bkgd,
+                                                                    endpoint_feat=False)
 
         if self._n_importance > 0:
             z_vals_mid = .5 * (z_vals[..., 1:] + z_vals[..., :-1])  # (N_rays, N_samples-1) interval mid points
@@ -590,9 +590,9 @@ class NeRFReplicaTrainingHandler:
                                    self._embed_fcn, self._embed_dirs_fcn, netchunk=self._net_chunk)
 
             rgb_fine, disp_fine, acc_fine, \
-                weights_fine, depth_fine, feat_map_fine = raw2outputs(raw_fine, z_vals, rays_d,
-                                                                      raw_noise_std, self._white_bkgd,
-                                                                      endpoint_feat=self._endpoint_feat)
+            weights_fine, depth_fine, feat_map_fine = raw2outputs(raw_fine, z_vals, rays_d,
+                                                                  raw_noise_std, self._white_bkgd,
+                                                                  endpoint_feat=self._endpoint_feat)
 
         all_outputs = {}
         all_outputs["rgb_coarse"] = rgb_coarse
