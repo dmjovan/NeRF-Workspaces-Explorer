@@ -50,7 +50,7 @@ class Workspace(metaclass=ABCMeta):
         coordinates: COORD = self._transform_relative_coordinates(rel_x, rel_y, horizontal_angle, vertical_angle)
 
         print(f"Transformed coordinates are: {coordinates}\n"
-              f"-----------------------------------------------------------------------------------------")
+              f"-------------------------------------------------------------")
 
         image_array = self._nerf_inference.render_coordinates(coordinates)
 

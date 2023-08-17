@@ -14,6 +14,10 @@ XYZ.__copy__ = lambda self: XYZ(self.x, self.y, self.z)
 
 COORD = namedtuple("COORD", ["x", "y", "z", "yaw", "pitch", "roll"])
 COORD.__new__.__defaults__ = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-COORD.__str__ = lambda c: f"x = {c.x:.3f}, y = {c.y:.3f}, z = {c.z:.3f}, " \
-                          f"yaw = {c.yaw:.3f}, pitch = {c.pitch:.3f}, roll = {c.roll}"
+COORD.__str__ = lambda c: f"x = {c.x:.3f}, \n" \
+                          f"y = {c.y:.3f}, \n" \
+                          f"z = {c.z:.3f}, \n" \
+                          f"yaw = {c.yaw:.3f}, \n" \
+                          f"pitch = {c.pitch:.3f}, \n" \
+                          f"roll = {c.roll}"
 COORD.__copy__ = lambda self: COORD(self.x, self.y, self.z, self.yaw, self.pitch, self.roll)
