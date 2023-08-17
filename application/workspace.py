@@ -40,19 +40,19 @@ class Workspace(metaclass=ABCMeta):
         return self._floor_plan_scale
 
     @abstractmethod
-    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> COORD:
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, hor_angle: int, ver_angle: int) -> COORD:
         pass
 
     def initialize_models(self):
         self._nerf_inference.initialize_models()
 
-    def render_image(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> np.ndarray:
-        coords: COORD = self._transform_relative_coordinates(rel_x, rel_y, yaw, pitch)
+    def render_image(self, rel_x: float, rel_y: float, horizontal_angle: int, vertical_angle: int) -> np.ndarray:
+        coordinates: COORD = self._transform_relative_coordinates(rel_x, rel_y, horizontal_angle, vertical_angle)
 
-        print(f"Transformed coordinates are: {coords}\n"
+        print(f"Transformed coordinates are: {coordinates}\n"
               f"-----------------------------------------------------------------------------------------")
 
-        image_array = self._nerf_inference.render_coordinates(coords)
+        image_array = self._nerf_inference.render_coordinates(coordinates)
 
         return image_array  # H, W, C
 
@@ -65,6 +65,7 @@ class OfficeTokyoWorkspace(Workspace):
                          floor_plan_scale=HW(600, 600),
                          model_path="nerf/experiments/office_tokyo/1/checkpoints/100000.ckpt")
 
+        # X, Y, Z coordinates
         self._x_max = 1.5
         self._x_min = -1.2
 
@@ -73,11 +74,15 @@ class OfficeTokyoWorkspace(Workspace):
         self._z_max = 1.2
         self._z_min = -0.6
 
-    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> COORD:
+        # Euler angles
+        self._fixed_roll = 180.0
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, hor_angle: int, ver_angle: int) -> COORD:
         x = (self._x_min - self._x_max) * rel_y + self._x_max
         z = (self._z_min - self._z_max) * rel_x + self._z_max
 
-        return COORD(x=x, y=self._fixed_y, z=z, yaw=float(yaw), pitch=float(pitch))
+        return COORD(x=x, y=self._fixed_y, z=z,
+                     yaw=(-1.0) * hor_angle, pitch=(-1.0) * ver_angle, roll=self._fixed_roll)
 
 
 class OfficeNewYorkWorkspace(Workspace):
@@ -88,10 +93,15 @@ class OfficeNewYorkWorkspace(Workspace):
                          floor_plan_scale=HW(600, 800),
                          model_path="nerf/experiments/office_new_york/1/checkpoints/200000.ckpt")
 
+        # X, Y, Z coordinates
         self._fixed_y = -0.5
 
-    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> COORD:
-        return COORD(x=rel_x, y=self._fixed_y, z=rel_y, yaw=float(yaw), pitch=float(pitch))
+        # Euler angles
+        self._fixed_roll = 180.0
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, hor_angle: int, ver_angle: int) -> COORD:
+        return COORD(x=rel_x, y=self._fixed_y, z=rel_y,
+                     yaw=float(hor_angle), pitch=float(ver_angle), roll=self._fixed_roll)
 
 
 class OfficeGeneveWorkspace(Workspace):
@@ -102,10 +112,15 @@ class OfficeGeneveWorkspace(Workspace):
                          floor_plan_scale=HW(600, 1000),
                          model_path="nerf/experiments/office_geneve/1/checkpoints/200000.ckpt")
 
+        # X, Y, Z coordinates
         self._fixed_y = -0.5
 
-    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> COORD:
-        return COORD(x=rel_x, y=self._fixed_y, z=rel_y, yaw=float(yaw), pitch=float(pitch))
+        # Euler angles
+        self._fixed_roll = 180.0
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, hor_angle: int, ver_angle: int) -> COORD:
+        return COORD(x=rel_x, y=self._fixed_y, z=rel_y,
+                     yaw=float(hor_angle), pitch=float(ver_angle), roll=self._fixed_roll)
 
 
 class OfficeBelgradeWorkspace(Workspace):
@@ -116,7 +131,12 @@ class OfficeBelgradeWorkspace(Workspace):
                          floor_plan_scale=HW(600, 750),
                          model_path="nerf/experiments/office_belgrade/1/checkpoints/200000.ckpt")
 
+        # X, Y, Z coordinates
         self._fixed_y = -0.5
 
-    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> COORD:
-        return COORD(x=rel_x, y=self._fixed_y, z=rel_y, yaw=float(yaw), pitch=float(pitch))
+        # Euler angles
+        self._fixed_roll = 180.0
+
+    def _transform_relative_coordinates(self, rel_x: float, rel_y: float, hor_angle: int, ver_angle: int) -> COORD:
+        return COORD(x=rel_x, y=self._fixed_y, z=rel_y,
+                     yaw=float(hor_angle), pitch=float(ver_angle), roll=self._fixed_roll)

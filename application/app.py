@@ -193,8 +193,8 @@ class WorkspaceExplorer(QMainWindow):
         self._rel_y = 0.0
 
         # Camera angles [deg]
-        self._yaw_angle = 0
-        self._pitch_angle = 0
+        self._horizontal_angle = 0
+        self._vertical_angle = 0
         self._angle_step = 15
 
     def _reset_coordinates(self):
@@ -210,8 +210,8 @@ class WorkspaceExplorer(QMainWindow):
         Resetting angles for camera view.
         """
 
-        self._yaw_angle = 0
-        self._pitch_angle = 0
+        self._horizontal_angle = 0
+        self._vertical_angle = 0
 
     def paintEvent(self, event: Any) -> None:
         """
@@ -327,13 +327,13 @@ class WorkspaceExplorer(QMainWindow):
 
         print(f"-----------------------------------------------------------------------------------------\n"
               f"Rendering new NeRF view from following relative coordinates: \n"
-              f"\trelative_x: {self._rel_x:3f},\n"
-              f"\trelative_y: {self._rel_y:3f},\n"
-              f"\tyaw_angle: {self._yaw_angle},\n"
-              f"\tpitch_angle: {self._pitch_angle}\n"
+              f"\trelative X: {self._rel_x:3f},\n"
+              f"\trelative Y: {self._rel_y:3f},\n"
+              f"\thorizontal angle: {self._horizontal_angle},\n"
+              f"\tvertical angle: {self._vertical_angle}\n"
               f"-----------------------------------------------------------------------------------------")
 
-        image = self._workspace.render_image(self._rel_x, self._rel_y, self._yaw_angle, self._pitch_angle)
+        image = self._workspace.render_image(self._rel_x, self._rel_y, self._horizontal_angle, self._vertical_angle)
 
         # Convert the NumPy array into a QImage
         height, width, channels = image.shape
@@ -383,34 +383,34 @@ class WorkspaceExplorer(QMainWindow):
 
     def _left_button_clicked(self, event: Any) -> None:
         """
-        Rendering new image on camera yaw angle change for -15 degrees.
+        Rendering new image on camera horizontal movement for -15 degrees.
         """
 
-        self._yaw_angle -= self._angle_step if self._yaw_angle > -180 else 0
+        self._horizontal_angle -= self._angle_step if self._horizontal_angle > -180 else 0
         self._render_nerf_image()
 
     def _right_button_clicked(self, event: Any) -> None:
         """
-        Rendering new image on camera yaw angle change for +15 degrees.
+        Rendering new image on camera horizontal movement for +15 degrees.
         """
 
-        self._yaw_angle += self._angle_step if self._yaw_angle < 180 else 0
+        self._horizontal_angle += self._angle_step if self._horizontal_angle < 180 else 0
         self._render_nerf_image()
 
     def _up_button_clicked(self, event: Any) -> None:
         """
-        Rendering new image on camera pitch angle change for +15 degrees.
+        Rendering new image on camera vertical movement for +15 degrees.
         """
 
-        self._pitch_angle += self._angle_step if self._pitch_angle < 180 else 0
+        self._vertical_angle += self._angle_step if self._vertical_angle < 180 else 0
         self._render_nerf_image()
 
     def _down_button_clicked(self, event: Any) -> None:
         """
-        Rendering new image on camera pitch angle change for -15 degrees.
+        Rendering new image on camera vertical movement for -15 degrees.
         """
 
-        self._pitch_angle -= self._angle_step if self._pitch_angle > -180 else 0
+        self._vertical_angle -= self._angle_step if self._vertical_angle > -180 else 0
         self._render_nerf_image()
 
 
