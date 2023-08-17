@@ -14,8 +14,6 @@ def create_rays(num_images: int, Ts_c2w: torch.Tensor, height: int, width: int, 
     Note: Use either convention is fine, but the corresponding pose should follow the same convention.
     """
 
-    print("Preparing rays")
-
     rays_cam = _get_rays_camera(num_images, height, width, fx, fy, cx, cy)  # [N, H, W, 3]
 
     dirs_C = rays_cam.view(num_images, -1, 3)  # [N, HW, 3]

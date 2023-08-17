@@ -38,4 +38,4 @@ logging:
   step_render_train: 5000 # frequency of rendering on training data
 
 inference:
-  cuda_enabled: False
+  chunk: 1024*8

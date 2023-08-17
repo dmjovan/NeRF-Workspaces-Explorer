@@ -1,7 +1,7 @@
+import copy
 import math
 import os
-from contextlib import suppress
-from typing import Dict
+from typing import Dict, Any
 
 import numpy as np
 import torch
@@ -44,7 +44,7 @@ class NeRFReplicaInferenceHandler:
         self._net_depth_fine = eval(self._config_parser.get_param(("model", "net_depth_fine"), str))
         self._net_width_fine = eval(self._config_parser.get_param(("model", "net_width_fine"), str))
         self._net_chunk = eval(self._config_parser.get_param(("model", "net_chunk"), str))
-        self._chunk = eval(self._config_parser.get_param(("model", "chunk"), str))
+        self._chunk = eval(self._config_parser.get_param(("inference", "chunk"), str))
 
         # Setting rendering options
         self._n_rays = eval(self._config_parser.get_param(("rendering", "n_rays"), str))
@@ -76,15 +76,14 @@ class NeRFReplicaInferenceHandler:
         # Depth bounds
         self._depth_close_bound, self._depth_far_bound = self._config_parser.get_param(("rendering", "depth_range"),
                                                                                        list)
-        # CUDA settings
-        self._cuda_enabled = self._config_parser.get_param(("inference", "cuda_enabled"), bool, default=False)
-
         # Models
         self._nerf_net_coarse = None
         self._nerf_net_fine = None
 
         self._embed_fcn = None
         self._embed_dirs_fcn = None
+
+        torch.cuda.empty_cache()
 
     def initialize_models(self):
         """
@@ -109,7 +108,7 @@ class NeRFReplicaInferenceHandler:
                           input_ch=input_ch,
                           output_ch=5,
                           input_ch_views=input_ch_views,
-                          use_view_dirs=self._use_view_dirs)
+                          use_view_dirs=self._use_view_dirs).cuda()
 
         # Creating NeRF model - fine
         model_fine = NeRFModel(D=self._net_depth_fine,
@@ -117,40 +116,52 @@ class NeRFReplicaInferenceHandler:
                                input_ch=input_ch,
                                output_ch=5,
                                input_ch_views=input_ch_views,
-                               use_view_dirs=self._use_view_dirs)
+                               use_view_dirs=self._use_view_dirs).cuda()
 
         self._nerf_net_coarse = model
         self._nerf_net_fine = model_fine
 
-        if self._cuda_enabled:
-            self._nerf_net_coarse = self._nerf_net_coarse.cuda()
-            self._nerf_net_fine = self._nerf_net_fine.cuda()
-        else:
-            self._nerf_net_coarse = self._nerf_net_coarse.cpu()
-            self._nerf_net_fine = self._nerf_net_fine.cpu()
+        self._embed_fcn = embed_fcn
+        self._embed_dirs_fcn = embed_dirs_fcn
 
         self._nerf_net_coarse.eval()
         self._nerf_net_fine.eval()
 
-        self._embed_fcn = embed_fcn
-        self._embed_dirs_fcn = embed_dirs_fcn
+        try:
+            # Loading models saved state dictionary
+            checkpoint = torch.load(self._ckpt_path, map_location=torch.device("cuda"))
 
-        if not os.path.exists(self._ckpt_path):
-            raise RuntimeError(f"Cannot load models from following path: {self._ckpt_path}. Path doesn't exist.")
+            checkpoint["network_coarse_state_dict"] = self.transform_state_dict(
+                checkpoint["network_coarse_state_dict"])
 
-        else:
-            with suppress(FileNotFoundError):
-                # Loading models saved state dictionary
-                checkpoint = torch.load(self._ckpt_path,
-                                        map_location=torch.device("cuda") if self._cuda_enabled else torch.device(
-                                            "cpu"))
+            checkpoint["network_fine_state_dict"] = self.transform_state_dict(
+                checkpoint["network_fine_state_dict"])
 
-                self._nerf_net_coarse.load_state_dict(checkpoint["network_coarse_state_dict"], strict=False)
-                self._nerf_net_fine.load_state_dict(checkpoint["network_fine_state_dict"], strict=False)
+            self._nerf_net_coarse.load_state_dict(checkpoint["network_coarse_state_dict"])
+            self._nerf_net_fine.load_state_dict(checkpoint["network_fine_state_dict"])
 
-                # Setting evaluation mode for models
-                self._nerf_net_coarse.eval()
-                self._nerf_net_fine.eval()
+            # Setting evaluation mode for models
+            self._nerf_net_coarse.eval()
+            self._nerf_net_fine.eval()
+
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"Checkpoint path: {self._ckpt_path} for model cannot be found!") from exc
+
+    @staticmethod
+    def transform_state_dict(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Due to mismatch of key names while training and evaluating,
+        some keys changed expected names inside state dict.
+        This function handles this.
+        """
+        new_dict = {}
+        for key in state_dict:
+            if key.endswith("weight") or key.endswith("bias"):
+                new_dict[f"_{key}"] = state_dict[key]
+            else:
+                new_dict[key] = state_dict[key]
+
+        return copy.deepcopy(new_dict)
 
     def render_coordinates(self, coordinates: COORD) -> np.ndarray:
 
@@ -160,15 +171,14 @@ class NeRFReplicaInferenceHandler:
 
             rays = create_rays(camera_pose.shape[0], camera_pose, self._img_h, self._img_w, self._fx, self._fy,
                                self._cx, self._cy, self._depth_close_bound, self._depth_far_bound, self._use_view_dirs)
-
-            # Shape of rays should be: [1, H*W, 11]
+            rays = rays.cuda()
 
             # Rendering rays
             output_dict = self._render_rays(rays[0])
 
             # Gathering output data
             rgb_output = output_dict["rgb_fine"]
-            rgb_output = rgb_output.cpu().numpy().reshape((self._img_h, self._img_w, 3))  # H, W, C
+            rgb_output = rgb_output.detach().cpu().numpy().reshape((self._img_h, self._img_w, 3))  # H, W, C
 
             rgb_image = to8b_np(rgb_output)
 
@@ -178,11 +188,6 @@ class NeRFReplicaInferenceHandler:
         """
         Inference rendering of all rays created for one image with requested coordinates
         """
-
-        if self._cuda_enabled:
-            flat_rays = flat_rays.cuda()
-        else:
-            flat_rays = flat_rays.cpu()
 
         ray_shape = flat_rays.shape  # num_rays, 11
 
@@ -208,7 +213,7 @@ class NeRFReplicaInferenceHandler:
         bounds = torch.reshape(ray_batch[..., 6:8], [-1, 1, 2])
         near, far = bounds[..., 0], bounds[..., 1]  # [N_rays, 1], [N_rays, 1]
 
-        t_vals = torch.linspace(0., 1., steps=self._n_samples)
+        t_vals = torch.linspace(0., 1., steps=self._n_samples).cuda()
 
         z_vals = near * (1. - t_vals) + far * (t_vals)  # use linear sampling in depth space
 
@@ -224,13 +229,13 @@ class NeRFReplicaInferenceHandler:
         rgb_coarse, disp_coarse, acc_coarse, \
         weights_coarse, depth_coarse, feat_map_coarse = raw2outputs(raw_coarse, z_vals, rays_d,
                                                                     raw_noise_std, self._white_bkgd,
-                                                                    endpoint_feat=False,
-                                                                    cuda_enabled=self._cuda_enabled)
+                                                                    endpoint_feat=False)
 
         if self._n_importance > 0:
             # (N_rays, N_samples-1) interval mid points
             z_vals_mid = .5 * (z_vals[..., 1:] + z_vals[..., :-1])
-            z_samples = sample_pdf(z_vals_mid, weights_coarse[..., 1:-1], self._n_importance)
+            z_samples = sample_pdf(z_vals_mid, weights_coarse[..., 1:-1], self._n_importance,
+                                   det=(self._perturb == 0.) or True)
             z_samples = z_samples.detach()
             # detach so that grad doesn't propogate to weights_coarse from here
             # values are interleaved actually, so maybe can do better than sort?
@@ -246,8 +251,7 @@ class NeRFReplicaInferenceHandler:
             rgb_fine, disp_fine, acc_fine, \
             weights_fine, depth_fine, feat_map_fine = raw2outputs(raw_fine, z_vals, rays_d,
                                                                   raw_noise_std, self._white_bkgd,
-                                                                  endpoint_feat=self._endpoint_feat,
-                                                                  cuda_enabled=self._cuda_enabled)
+                                                                  endpoint_feat=self._endpoint_feat)
 
         all_outputs = {}
         all_outputs["rgb_coarse"] = rgb_coarse

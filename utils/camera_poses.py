@@ -46,4 +46,4 @@ def get_camera_poses_from_list_of_coordinates(coordinates: List[COORD]):
 
     Ts_c2w = np.asarray(Ts_c2w, dtype=np.float32).reshape((-1, 4, 4))
 
-    return torch.tensor(Ts_c2w).cpu()
+    return torch.tensor(Ts_c2w)

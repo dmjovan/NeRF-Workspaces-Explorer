@@ -1,6 +1,7 @@
 from typing import Callable, Dict
 
 import torch
+from tqdm import tqdm
 
 
 def batchify_rays(render_fn: Callable, rays_flat: torch.Tensor, chunk: int = 1024 * 32) -> Dict[str, torch.Tensor]:
@@ -9,7 +10,7 @@ def batchify_rays(render_fn: Callable, rays_flat: torch.Tensor, chunk: int = 102
     """
 
     all_outputs = {}
-    for i in range(0, rays_flat.shape[0], chunk):
+    for i in tqdm(range(0, rays_flat.shape[0], chunk)):
 
         # Rendering one chunk of rays
         chunk_of_rays_output = render_fn(rays_flat[i:i + chunk])

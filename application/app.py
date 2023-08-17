@@ -325,11 +325,13 @@ class WorkspaceExplorer(QMainWindow):
         Rendering image for each particular view point using NeRF model pretrained for each workspace.
         """
 
-        print(f"Rendering new NeRF view from following coordinates: \n"
+        print(f"-----------------------------------------------------------------------------------------\n"
+              f"Rendering new NeRF view from following relative coordinates: \n"
               f"\trelative_x: {self._rel_x:3f},\n"
               f"\trelative_y: {self._rel_y:3f},\n"
               f"\tyaw_angle: {self._yaw_angle},\n"
-              f"\tpitch_angle: {self._pitch_angle}")
+              f"\tpitch_angle: {self._pitch_angle}\n"
+              f"-----------------------------------------------------------------------------------------")
 
         image = self._workspace.render_image(self._rel_x, self._rel_y, self._yaw_angle, self._pitch_angle)
 

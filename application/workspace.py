@@ -22,7 +22,7 @@ class Workspace(metaclass=ABCMeta):
         self._model_path: str = os.path.join(PROJECT_PATH, model_path)
 
         self._nerf_inference = NeRFReplicaInferenceHandler(office_name=self._name.replace(" ", "_").lower(),
-                                                           ckpt_path=self._model_path)
+                                                           ckpt_path=os.path.normpath(self._model_path))
 
     def __repr__(self) -> str:
         return self._name
@@ -48,6 +48,9 @@ class Workspace(metaclass=ABCMeta):
 
     def render_image(self, rel_x: float, rel_y: float, yaw: int, pitch: int) -> np.ndarray:
         coords: COORD = self._transform_relative_coordinates(rel_x, rel_y, yaw, pitch)
+
+        print(f"Transformed coordinates are: {coords}\n"
+              f"-----------------------------------------------------------------------------------------")
 
         image_array = self._nerf_inference.render_coordinates(coords)
 
