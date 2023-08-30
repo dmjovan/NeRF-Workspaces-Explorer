@@ -10,37 +10,45 @@ trans_xyz = lambda x, y, z: np.array([[1, 0, 0, x],
                                       [0, 0, 1, z],
                                       [0, 0, 0, 1]], dtype=np.float32)
 
-yaw_rotation = lambda th: np.array([[np.cos(th), -np.sin(th), 0, 0],
-                                    [np.sin(th), np.cos(th), 0, 0],
-                                    [0, 0, 1, 0],
+yaw_rotation = lambda th: np.array([[np.cos(th), 0, np.sin(th), 0],
+                                    [0, 1, 0, 0],
+                                    [-np.sin(th), 0, np.cos(th), 0],
                                     [0, 0, 0, 1]], dtype=np.float32)
 
-pitch_rotation = lambda phi: np.array([[np.cos(phi), 0, np.sin(phi), 0],
-                                       [0, 1, 0, 0],
-                                       [-np.sin(phi), 0, np.cos(phi), 0],
-                                       [0, 0, 0, 1]], dtype=np.float32)
-
-roll_rotation = lambda rho: np.array([[1, 0, 0, 0],
-                                      [0, np.cos(rho), -np.sin(rho), 0],
-                                      [0, np.sin(rho), np.cos(rho), 0],
+pitch_rotation = lambda th: np.array([[1, 0, 0, 0],
+                                      [0, np.cos(th), -np.sin(th), 0],
+                                      [0, np.sin(th), np.cos(th), 0],
                                       [0, 0, 0, 1]], dtype=np.float32)
 
+roll_rotation = lambda th: np.array([[np.cos(th), -np.sin(th), 0, 0],
+                                     [np.sin(th), np.cos(th), 0, 0],
+                                     [0, 0, 1, 0],
+                                     [0, 0, 0, 1]], dtype=np.float32)
 
-def _get_camera_to_world_matrix(coordinates: COORD):
+
+def _get_camera_to_world_matrix(coordinates: COORD) -> np.ndarray:
     """
     Converting camera poses into transformation matrix.
     """
 
-    c2w = trans_xyz(coordinates.x, coordinates.y, coordinates.z)
-    c2w = yaw_rotation(coordinates.roll / 180.0 * np.pi) @ c2w
-    c2w = pitch_rotation(coordinates.yaw / 180.0 * np.pi) @ c2w
-    c2w = roll_rotation(coordinates.pitch / 180.0 * np.pi) @ c2w
-    c2w = np.array([[-1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]]) @ c2w
+    # Rotation matrices
+    R_roll = roll_rotation(coordinates.roll / 180.0 * np.pi)
+    R_pitch = pitch_rotation(coordinates.pitch / 180.0 * np.pi)
+    R_yaw = yaw_rotation(coordinates.yaw / 180.0 * np.pi)
+
+    # Combined rotation matrix
+    R = R_roll @ R_pitch @ R_yaw
+
+    # Translation matrix
+    T = trans_xyz(coordinates.x, coordinates.y, coordinates.z)
+
+    # Final camera-to-world transformation matrix
+    c2w = R @ T
 
     return c2w
 
 
-def get_camera_poses_from_list_of_coordinates(coordinates: List[COORD]):
+def get_camera_poses_from_list_of_coordinates(coordinates: List[COORD]) -> torch.Tensor:
     """
     Getting camera-to-world poses from list of coordinates.
     """
