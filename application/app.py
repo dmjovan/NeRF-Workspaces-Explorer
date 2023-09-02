@@ -195,7 +195,7 @@ class WorkspaceExplorer(QMainWindow):
         # Camera angles [deg]
         self._horizontal_angle = 0
         self._vertical_angle = 0
-        self._angle_step = 15
+        self._angle_step = 30
 
     def _reset_coordinates(self):
         """
@@ -386,7 +386,7 @@ class WorkspaceExplorer(QMainWindow):
         Rendering new image on camera horizontal movement for -15 degrees.
         """
 
-        self._horizontal_angle -= self._angle_step if self._horizontal_angle > -180 else 0
+        self._horizontal_angle -= self._angle_step
         self._render_nerf_image()
 
     def _right_button_clicked(self, event: Any) -> None:
@@ -394,7 +394,7 @@ class WorkspaceExplorer(QMainWindow):
         Rendering new image on camera horizontal movement for +15 degrees.
         """
 
-        self._horizontal_angle += self._angle_step if self._horizontal_angle < 180 else 0
+        self._horizontal_angle += self._angle_step
         self._render_nerf_image()
 
     def _up_button_clicked(self, event: Any) -> None:
@@ -402,7 +402,7 @@ class WorkspaceExplorer(QMainWindow):
         Rendering new image on camera vertical movement for +15 degrees.
         """
 
-        self._vertical_angle += self._angle_step if self._vertical_angle < 180 else 0
+        self._vertical_angle += self._angle_step
         self._render_nerf_image()
 
     def _down_button_clicked(self, event: Any) -> None:
@@ -410,7 +410,7 @@ class WorkspaceExplorer(QMainWindow):
         Rendering new image on camera vertical movement for -15 degrees.
         """
 
-        self._vertical_angle -= self._angle_step if self._vertical_angle > -180 else 0
+        self._vertical_angle -= self._angle_step
         self._render_nerf_image()
 
 

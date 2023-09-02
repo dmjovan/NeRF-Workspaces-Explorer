@@ -163,11 +163,11 @@ class NeRFReplicaInferenceHandler:
 
         return copy.deepcopy(new_dict)
 
-    def render_coordinates(self, coordinates: COORD) -> np.ndarray:
+    def render_coordinates(self, init_coordinates: COORD, coordinates: COORD) -> np.ndarray:
 
         with torch.no_grad():
             # Getting camera pose matrix -> shape = (1, 4, 4)
-            camera_pose = get_camera_poses_from_list_of_coordinates([coordinates])
+            camera_pose = get_camera_poses_from_list_of_coordinates(init_coordinates, [coordinates])
 
             rays = create_rays(camera_pose.shape[0], camera_pose, self._img_h, self._img_w, self._fx, self._fy,
                                self._cx, self._cy, self._depth_close_bound, self._depth_far_bound, self._use_view_dirs)

@@ -1,5 +1,6 @@
 from typing import List
 
+import cv2
 import numpy as np
 import torch
 
@@ -48,15 +49,26 @@ def _get_camera_to_world_matrix(coordinates: COORD) -> np.ndarray:
     return c2w
 
 
-def get_camera_poses_from_list_of_coordinates(coordinates: List[COORD]) -> torch.Tensor:
+def get_camera_poses_from_list_of_coordinates(init_coordinates: COORD, coordinates: List[COORD]) -> torch.Tensor:
     """
     Getting camera-to-world poses from list of coordinates.
     """
 
     Ts_c2w = []
     for coord in coordinates:
-        c2w = _get_camera_to_world_matrix(coord).reshape((4, 4))
-        Ts_c2w.append(c2w)
+        extrinsic_matrix = _get_camera_to_world_matrix(init_coordinates).reshape((4, 4))
+
+        # Creating rotation matrices using OpenCV's Rodrigues function
+        horizontal_rotation_matrix, _ = cv2.Rodrigues(np.array([0, 0, coord.yaw / 180.0 * np.pi]))
+        vertical_rotation_matrix, _ = cv2.Rodrigues(np.array([coord.pitch / 180.0 * np.pi, 0, 0]))
+
+        # Applying the rotations to the existing rotation matrix in the extrinsic matrix
+        new_rotation_matrix = horizontal_rotation_matrix @ vertical_rotation_matrix @ extrinsic_matrix[:3, :3]
+
+        # Updating the rotation component in the extrinsic matrix
+        extrinsic_matrix[:3, :3] = new_rotation_matrix
+
+        Ts_c2w.append(extrinsic_matrix)
 
     Ts_c2w = np.asarray(Ts_c2w, dtype=np.float32).reshape((-1, 4, 4))
 

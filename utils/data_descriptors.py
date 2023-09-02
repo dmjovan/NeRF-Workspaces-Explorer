@@ -17,7 +17,7 @@ COORD.__new__.__defaults__ = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 COORD.__str__ = lambda c: f"x = {c.x:.3f}, \n" \
                           f"y = {c.y:.3f}, \n" \
                           f"z = {c.z:.3f}, \n" \
-                          f"yaw = {c.yaw:.3f}, \n" \
-                          f"pitch = {c.pitch:.3f}, \n" \
-                          f"roll = {c.roll}"
+                          f"pitch (rotation over X axis) = {c.pitch:.3f}, \n" \
+                          f"yaw (rotation over Y axis) = {c.yaw:.3f}, \n" \
+                          f"roll (rotation over Z axis) = {c.roll:.3f}"
 COORD.__copy__ = lambda self: COORD(self.x, self.y, self.z, self.yaw, self.pitch, self.roll)
